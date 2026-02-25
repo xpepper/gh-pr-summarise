@@ -21,6 +21,27 @@ PR=""
 REPO_ARGS=()
 
 # ── Usage ─────────────────────────────────────────────────────────────────────
+draw_rocket() {
+  cat <<'ROCKET'
+        *
+       / \
+      /___\
+     |     |
+     |     |
+     |     |
+    /|     |\
+   / |     | \
+  /  |     |  \
+ /   |_____|   \
+/   /       \   \
+   /  *   *  \
+  /  * * * *  \
+     |     |
+    / \   / \
+   *   * *   *
+ROCKET
+}
+
 usage() {
   cat <<EOF
 Usage: gh pr-summarise [PR] [options]
@@ -38,6 +59,7 @@ Options:
   -n, --max-diff-chars N        Diff truncation limit in characters (default: $MAX_DIFF_CHARS)
   -y, --yes                     Apply without asking for confirmation
   -f, --force                   Generate even if a human-written description exists
+      --draw-me-a-rocket        The most important option
   -h, --help                    Show this help
 
 Environment variables:
@@ -60,6 +82,8 @@ while [[ $# -gt 0 ]]; do
       YES=true; shift ;;
     -f|--force)
       FORCE=true; shift ;;
+    --draw-me-a-rocket)
+      draw_rocket; exit 0 ;;
     -*)
       echo "Error: unknown option: $1" >&2; echo; usage >&2; exit 1 ;;
     *)

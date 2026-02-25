@@ -55,11 +55,20 @@ Use `--force` to override the skip and generate anyway.
 
 ## Configuration
 
-One environment variable is supported for advanced use:
+All defaults can be overridden with environment variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `PR_SUMMARISE_MODEL` | `openai/gpt-4.1` | Model used for generation. Same as `--model`. |
+| `PR_SUMMARISE_MAX_DIFF_CHARS` | `28000` | Diff truncation limit. Same as `--max-diff-chars`. |
+| `PR_SUMMARISE_ENDPOINT` | GitHub Models inference URL | Override the API endpoint. Useful for org-attributed usage (see below). |
 
 ```bash
 # Org-attributed usage (tracks API consumption against your org's quota)
 export PR_SUMMARISE_ENDPOINT="https://models.github.ai/orgs/<YOUR_ORG>/inference/chat/completions"
+
+# Persist a lighter model as your default
+export PR_SUMMARISE_MODEL="openai/gpt-4.1-mini"
 ```
 
 ## Requirements
