@@ -1,4 +1,4 @@
-.PHONY: test shellcheck bats install-deps-macos install-deps-ubuntu
+.PHONY: test shellcheck bats integration-test install-deps-macos install-deps-ubuntu
 
 test: shellcheck bats
 
@@ -6,7 +6,10 @@ shellcheck:
 	shellcheck gh-pr-summarise
 
 bats:
-	bats tests/
+	bats tests/gh-pr-summarise.bats
+
+integration-test:
+	bats tests/integration.bats
 
 install-deps-macos:
 	brew install shellcheck bats-core
