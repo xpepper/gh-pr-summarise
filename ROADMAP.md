@@ -31,3 +31,6 @@ Add a `tests/` directory with bats-core tests covering at least:
 ## Makefile
 
 Add a `Makefile` with targets: `test`, `shellcheck`, `install-deps-macos`, `install-deps-ubuntu`.
+
+## Add a small section in the README to install locally the extension for development
+e.g. `gh extension remove gh-pr-summarise && gh extension install .`
