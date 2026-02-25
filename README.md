@@ -73,3 +73,17 @@ export PR_SUMMARISE_ENDPOINT="https://models.github.ai/orgs/<YOUR_ORG>/inference
 ```bash
 gh extension upgrade pr-summarise
 ```
+
+## Development
+
+Install locally from a clone of this repo:
+
+```bash
+gh extension remove pr-summarise 2>/dev/null; gh extension install .
+```
+
+A permanent test PR lives at **https://github.com/xpepper/gh-pr-summarise/pull/1** — it has an empty description and a small, safe diff, making it ideal for end-to-end testing without side effects:
+
+```bash
+echo "n" | gh pr-summarise https://github.com/xpepper/gh-pr-summarise/pull/1
+```

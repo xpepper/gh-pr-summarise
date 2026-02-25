@@ -8,6 +8,9 @@
 
 set -euo pipefail
 
+# ── Version ───────────────────────────────────────────────────────────────────
+VERSION="0.1.0"
+
 # ── Defaults ──────────────────────────────────────────────────────────────────
 MODEL="${PR_SUMMARISE_MODEL:-openai/gpt-4.1}"
 MAX_DIFF_CHARS="${PR_SUMMARISE_MAX_DIFF_CHARS:-28000}"
@@ -39,6 +42,7 @@ Options:
   -y, --yes                     Apply without asking for confirmation
   -f, --force                   Generate even if a human-written description exists
   -h, --help                    Show this help
+  -v, --version                 Show version
 
 Environment variables:
   PR_SUMMARISE_ENDPOINT         Override the GitHub Models API endpoint.
@@ -52,9 +56,14 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help)
       usage; exit 0 ;;
+    -v|--version)
+      echo "gh pr-summarise $VERSION"; exit 0 ;;
     -m|--model)
       MODEL="$2"; shift 2 ;;
     -n|--max-diff-chars)
+      if ! [[ "$2" =~ ^[0-9]+$ ]] || [[ "$2" -eq 0 ]]; then
+        echo "Error: --max-diff-chars must be a positive integer, got: $2" >&2; exit 1
+      fi
       MAX_DIFF_CHARS="$2"; shift 2 ;;
     -y|--yes)
       YES=true; shift ;;
