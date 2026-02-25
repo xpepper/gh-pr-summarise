@@ -22,4 +22,4 @@ jobs:
         run: shellcheck gh-pr-summarise
 
       - name: bats
-        run: bats tests/
+        run: bats tests/gh-pr-summarise.bats
