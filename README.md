@@ -41,6 +41,7 @@ gh pr-summarise --force
 | `--yes` | `-y` | — | Apply without asking for confirmation. |
 | `--force` | `-f` | — | Generate even if a human-written description already exists. |
 | `--help` | `-h` | — | Show help. |
+| `--version` | `-v` | — | Print version and exit. |
 
 ## Behaviour
 

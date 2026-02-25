@@ -21,13 +21,13 @@ Run `./gh-pr-summarise --help` for usage.
 # Run the extension locally
 ./gh-pr-summarise [PR]
 
-# Run all checks (shellcheck + bats) — once Makefile exists
+# Run all checks (shellcheck + bats)
 make test
 
 # Run shellcheck only
 shellcheck gh-pr-summarise
 
-# Run bats tests only — once tests/ exists
+# Run bats tests only
 bats tests/
 ```
 
@@ -55,6 +55,3 @@ bats tests/
 
 Use `--force` to bypass the human-written check.
 
-## Roadmap
-
-See [ROADMAP.md](ROADMAP.md) for planned improvements.
