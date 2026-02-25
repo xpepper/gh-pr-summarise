@@ -131,6 +131,15 @@ teardown() {
   [[ "$output" == *"https://example.atlassian.net/browse/PROJ-123"* ]]
 }
 
+@test "skips PR with tracker URL prefix followed by human content" {
+  setup_mock_gh "https://example.atlassian.net/browse/PROJ-123
+
+This is a hand-crafted description."
+  run "$SCRIPT" 123
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already has a human-written description"* ]]
+}
+
 @test "preserves tracker URL prefix when regenerating from marker" {
   setup_mock_gh "https://example.atlassian.net/browse/PROJ-123
 

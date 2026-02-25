@@ -94,16 +94,25 @@ fi
 EXISTING_BODY=$(gh pr view "${REPO_ARGS[@]}" "$PR" --json body -q '.body // ""')
 MARKER="<!-- pr-summarise -->"
 
-# Extract a leading tracker URL to preserve across generation and regeneration
+# Extract a leading tracker URL to preserve across generation and regeneration.
+# Strip a possible trailing \r so the pattern works with CRLF line endings.
 PREFIX=""
 FIRST_LINE="${EXISTING_BODY%%$'\n'*}"
+FIRST_LINE="${FIRST_LINE%$'\r'}"
 if [[ "$FIRST_LINE" =~ ^https?://[^[:space:]]+$ ]]; then
   PREFIX="$FIRST_LINE"
 fi
 
+# A body is link-only when the first line is a URL and everything that follows
+# (ignoring whitespace) is empty.  Stripping ALL whitespace before the check
+# was wrong: it concatenated URL + body text into one non-space string that
+# always matched the URL pattern.
+BODY_REST=""
+[[ "$EXISTING_BODY" == *$'\n'* ]] && BODY_REST="${EXISTING_BODY#*$'\n'}"
+BODY_REST_TRIMMED="${BODY_REST//[$'\t\r\n ']/}"
+
 if [[ "$FORCE" == false && -n "$EXISTING_BODY" && "$EXISTING_BODY" != *"$MARKER"* ]]; then
-  TRIMMED="${EXISTING_BODY//[$'\t\r\n ']/}"
-  if [[ ! "$TRIMMED" =~ ^https?://[^[:space:]]+$ ]]; then
+  if [[ -z "$PREFIX" || -n "$BODY_REST_TRIMMED" ]]; then
     echo "PR #$PR already has a human-written description. Skipping." >&2
     echo "(Use --force to generate anyway.)" >&2
     echo ""
