@@ -6,6 +6,19 @@ SCRIPT="$BATS_TEST_DIRNAME/../gh-pr-summarise"
 TEST_PR_URL="https://github.com/xpepper/gh-pr-summarise/pull/1"
 MARKER="<!-- pr-summarise -->"
 
+@test "skips PR that has a human-written description" {
+  gh pr edit --repo xpepper/gh-pr-summarise 1 \
+    --body "This is a hand-written description with no marker."
+
+  run "$SCRIPT" "$TEST_PR_URL"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already has a human-written description"* ]]
+
+  body=$(gh pr view --repo xpepper/gh-pr-summarise 1 --json body -q '.body')
+  [[ "$body" == "This is a hand-written description with no marker." ]]
+}
+
 @test "generates and applies a description to the test PR" {
   run "$SCRIPT" --force --yes "$TEST_PR_URL"
 
