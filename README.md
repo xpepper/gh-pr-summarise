@@ -54,6 +54,8 @@ gh pr-summarise --force
 
 Use `--force` to override the skip and generate anyway.
 
+The tool detects its own output via an HTML comment marker (`<!-- pr-summarise -->`) embedded at the end of every generated description. If you edit a generated description and want to protect your changes from being overwritten on the next run, remove that marker.
+
 ## Configuration
 
 One environment variable is supported for advanced use:
