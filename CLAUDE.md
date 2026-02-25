@@ -21,14 +21,17 @@ Run `./gh-pr-summarise --help` for usage.
 # Run the extension locally
 ./gh-pr-summarise [PR]
 
-# Run all checks (shellcheck + bats)
+# Run all checks (shellcheck + bats unit tests)
 make test
 
 # Run shellcheck only
 shellcheck gh-pr-summarise
 
-# Run bats tests only
-bats tests/
+# Run bats unit tests only
+bats tests/gh-pr-summarise.bats
+
+# Run integration test (calls GitHub Models API and edits the live test PR)
+make integration-test
 ```
 
 ## Key Design Decisions

@@ -83,8 +83,14 @@ Install locally from a clone of this repo:
 gh extension remove pr-summarise 2>/dev/null; gh extension install .
 ```
 
-A permanent test PR lives at **https://github.com/xpepper/gh-pr-summarise/pull/1** — it has an empty description and a small, safe diff, making it ideal for end-to-end testing without side effects:
+A permanent test PR lives at **https://github.com/xpepper/gh-pr-summarise/pull/1** — it has a small, safe diff and is specifically meant for end-to-end testing.
 
 ```bash
+# Manual smoke test (prints the generated description, does not apply it)
 echo "n" | gh pr-summarise https://github.com/xpepper/gh-pr-summarise/pull/1
+
+# Automated integration test (calls GitHub Models API and edits the test PR)
+make integration-test
 ```
+
+> `make integration-test` is intentionally excluded from `make test` to avoid unintended API calls and PR edits in CI.
