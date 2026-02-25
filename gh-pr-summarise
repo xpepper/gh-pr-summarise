@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 # gh pr-summarise: Generate and apply a PR description using GitHub Models.
-# Usage: gh pr-summarise [PR number]
-#        If no PR number is given, uses the current branch's open PR.
 #
 # Required tools:
 #   gh    - GitHub CLI (https://cli.github.com), authenticated via `gh auth login`
@@ -10,21 +8,75 @@
 
 set -euo pipefail
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# ── Defaults ──────────────────────────────────────────────────────────────────
 MODEL="${PR_SUMMARISE_MODEL:-openai/gpt-4.1}"
 MAX_DIFF_CHARS="${PR_SUMMARISE_MAX_DIFF_CHARS:-28000}"
 ENDPOINT="${PR_SUMMARISE_ENDPOINT:-https://models.github.ai/inference/chat/completions}"
 # For org attribution, set:
 # export PR_SUMMARISE_ENDPOINT="https://models.github.ai/orgs/<ORG>/inference/chat/completions"
 
+YES=false
+FORCE=false
+PR=""
+
+# ── Usage ─────────────────────────────────────────────────────────────────────
+usage() {
+  cat <<EOF
+Usage: gh pr-summarise [PR] [options]
+
+Generate a PR description from the diff using GitHub Models and optionally
+apply it to the pull request.
+
+PR can be a number (123) or a full GitHub URL
+(https://github.com/owner/repo/pull/123).
+If omitted, uses the open PR for the current branch.
+
+Options:
+  -m, --model MODEL             Model to use (default: $MODEL)
+                                Run 'gh models list' to see available models.
+  -n, --max-diff-chars N        Diff truncation limit in characters (default: $MAX_DIFF_CHARS)
+  -y, --yes                     Apply without asking for confirmation
+  -f, --force                   Generate even if a human-written description exists
+  -h, --help                    Show this help
+
+Environment variables:
+  PR_SUMMARISE_ENDPOINT         Override the GitHub Models API endpoint.
+                                Useful for org-attributed usage:
+                                https://models.github.ai/orgs/<ORG>/inference/chat/completions
+EOF
+}
+
+# ── Argument parsing ──────────────────────────────────────────────────────────
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage; exit 0 ;;
+    -m|--model)
+      MODEL="$2"; shift 2 ;;
+    -n|--max-diff-chars)
+      MAX_DIFF_CHARS="$2"; shift 2 ;;
+    -y|--yes)
+      YES=true; shift ;;
+    -f|--force)
+      FORCE=true; shift ;;
+    -*)
+      echo "Error: unknown option: $1" >&2; echo; usage >&2; exit 1 ;;
+    *)
+      if [[ -n "$PR" ]]; then
+        echo "Error: unexpected argument: $1" >&2; echo; usage >&2; exit 1
+      fi
+      PR="$1"; shift ;;
+  esac
+done
+
 # ── Resolve PR number ─────────────────────────────────────────────────────────
-if [[ $# -ge 1 ]]; then
-  PR="$1"
-else
+if [[ -z "$PR" ]]; then
   if ! PR=$(gh pr view --json number -q '.number' 2>/dev/null); then
-    echo "Error: no PR number given and no open PR found for the current branch." >&2
+    echo "Error: no PR given and no open PR found for the current branch." >&2
     exit 1
   fi
+elif [[ "$PR" =~ ^https?://github\.com/[^/]+/[^/]+/pull/([0-9]+) ]]; then
+  PR="${BASH_REMATCH[1]}"
 fi
 
 # ── Fetch existing PR description ─────────────────────────────────────────────
@@ -32,12 +84,13 @@ EXISTING_BODY=$(gh pr view "$PR" --json body -q '.body // ""')
 MARKER="<!-- pr-summarise -->"
 
 LINK_ONLY=false
-if [[ -n "$EXISTING_BODY" && "$EXISTING_BODY" != *"$MARKER"* ]]; then
+if [[ "$FORCE" == false && -n "$EXISTING_BODY" && "$EXISTING_BODY" != *"$MARKER"* ]]; then
   TRIMMED="${EXISTING_BODY//[$'\t\r\n ']/}"
   if [[ "$TRIMMED" =~ ^https?://[^[:space:]]+$ ]]; then
     LINK_ONLY=true
   else
     echo "PR #$PR already has a human-written description. Skipping." >&2
+    echo "(Use --force to generate anyway.)" >&2
     echo ""
     echo "$EXISTING_BODY"
     exit 0
@@ -101,11 +154,17 @@ echo "──── Generated description ─────────────
 echo "$FINAL_BODY"
 echo "───────────────────────────────────────────────────────────────────────────"
 echo ""
-read -r -p "Apply this description to PR #$PR? [y/N] " confirm
+
+if [[ "$YES" == true ]]; then
+  confirm="y"
+else
+  read -r -p "Apply this description to PR #$PR? [y/N] " confirm
+fi
 
 if [[ "$confirm" =~ ^[Yy]$ ]]; then
   gh pr edit "$PR" --body "$FINAL_BODY"
-  echo "PR #$PR description updated."
+  PR_URL=$(gh pr view "$PR" --json url -q '.url')
+  echo "PR #$PR description updated: $PR_URL"
 else
   echo "Aborted. No changes made."
 fi
