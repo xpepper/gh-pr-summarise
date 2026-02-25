@@ -94,12 +94,16 @@ fi
 EXISTING_BODY=$(gh pr view "${REPO_ARGS[@]}" "$PR" --json body -q '.body // ""')
 MARKER="<!-- pr-summarise -->"
 
-LINK_ONLY=false
+# Extract a leading tracker URL to preserve across generation and regeneration
+PREFIX=""
+FIRST_LINE="${EXISTING_BODY%%$'\n'*}"
+if [[ "$FIRST_LINE" =~ ^https?://[^[:space:]]+$ ]]; then
+  PREFIX="$FIRST_LINE"
+fi
+
 if [[ "$FORCE" == false && -n "$EXISTING_BODY" && "$EXISTING_BODY" != *"$MARKER"* ]]; then
   TRIMMED="${EXISTING_BODY//[$'\t\r\n ']/}"
-  if [[ "$TRIMMED" =~ ^https?://[^[:space:]]+$ ]]; then
-    LINK_ONLY=true
-  else
+  if [[ ! "$TRIMMED" =~ ^https?://[^[:space:]]+$ ]]; then
     echo "PR #$PR already has a human-written description. Skipping." >&2
     echo "(Use --force to generate anyway.)" >&2
     echo ""
@@ -144,17 +148,17 @@ RESPONSE=$(curl -sS -L "$ENDPOINT" \
       }]
     }')")
 
-SUMMARY=$(echo "$RESPONSE" | jq -r '.choices[0].message.content')
+SUMMARY=$(echo "$RESPONSE" | jq -r '.choices[0].message.content' 2>/dev/null) || SUMMARY=""
 
 if [[ -z "$SUMMARY" || "$SUMMARY" == "null" ]]; then
-  echo "Error: empty response from GitHub Models. Raw response:" >&2
+  echo "Error: no summary returned by GitHub Models. Raw response:" >&2
   echo "$RESPONSE" >&2
   exit 1
 fi
 
 # ── Compose final body ────────────────────────────────────────────────────────
-if [[ "$LINK_ONLY" == true ]]; then
-  FINAL_BODY="${EXISTING_BODY}"$'\n\n'"${SUMMARY}"$'\n\n'"${MARKER}"
+if [[ -n "$PREFIX" ]]; then
+  FINAL_BODY="${PREFIX}"$'\n\n'"${SUMMARY}"$'\n\n'"${MARKER}"
 else
   FINAL_BODY="${SUMMARY}"$'\n\n'"${MARKER}"
 fi
