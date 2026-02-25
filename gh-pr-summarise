@@ -18,6 +18,7 @@ ENDPOINT="${PR_SUMMARISE_ENDPOINT:-https://models.github.ai/inference/chat/compl
 YES=false
 FORCE=false
 PR=""
+REPO_ARGS=()
 
 # ── Usage ─────────────────────────────────────────────────────────────────────
 usage() {
@@ -75,12 +76,13 @@ if [[ -z "$PR" ]]; then
     echo "Error: no PR given and no open PR found for the current branch." >&2
     exit 1
   fi
-elif [[ "$PR" =~ ^https?://github\.com/[^/]+/[^/]+/pull/([0-9]+) ]]; then
-  PR="${BASH_REMATCH[1]}"
+elif [[ "$PR" =~ ^https?://github\.com/([^/]+/[^/]+)/pull/([0-9]+) ]]; then
+  REPO_ARGS=("--repo" "${BASH_REMATCH[1]}")
+  PR="${BASH_REMATCH[2]}"
 fi
 
 # ── Fetch existing PR description ─────────────────────────────────────────────
-EXISTING_BODY=$(gh pr view "$PR" --json body -q '.body // ""')
+EXISTING_BODY=$(gh pr view "${REPO_ARGS[@]}" "$PR" --json body -q '.body // ""')
 MARKER="<!-- pr-summarise -->"
 
 LINK_ONLY=false
@@ -99,7 +101,7 @@ fi
 
 # ── Fetch diff ────────────────────────────────────────────────────────────────
 echo "Fetching diff for PR #$PR..."
-FULL_DIFF=$(gh pr diff "$PR" --patch)
+FULL_DIFF=$(gh pr diff "${REPO_ARGS[@]}" "$PR" --patch)
 DIFF="${FULL_DIFF:0:$MAX_DIFF_CHARS}"
 
 if [[ -z "$DIFF" ]]; then
@@ -162,8 +164,8 @@ else
 fi
 
 if [[ "$confirm" =~ ^[Yy]$ ]]; then
-  gh pr edit "$PR" --body "$FINAL_BODY"
-  PR_URL=$(gh pr view "$PR" --json url -q '.url')
+  gh pr edit "${REPO_ARGS[@]}" "$PR" --body "$FINAL_BODY"
+  PR_URL=$(gh pr view "${REPO_ARGS[@]}" "$PR" --json url -q '.url')
   echo "PR #$PR description updated: $PR_URL"
 else
   echo "Aborted. No changes made."
