@@ -7,7 +7,7 @@ No Copilot subscription needed — GitHub Models is free for any GitHub account 
 ## Install
 
 ```bash
-gh extension install pietrodibello/gh-pr-summarise
+gh extension install xpepper/gh-pr-summarise
 ```
 
 ## Usage
