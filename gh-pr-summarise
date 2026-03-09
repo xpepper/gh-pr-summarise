@@ -174,7 +174,7 @@ RESPONSE=$(curl -sS -L "$ENDPOINT" \
       max_tokens: 500,
       messages: [{
         role: "user",
-        content: $prompt + "\n\n" + $diff
+        content: "\($prompt)\n\n\($diff)"
       }]
     }')")
 
