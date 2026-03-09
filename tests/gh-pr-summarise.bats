@@ -208,3 +208,16 @@ EOF
   [ "$status" -eq 0 ]
   grep -q "Env var custom prompt." "$_MOCK_DIR/curl_args"
 }
+
+@test "--prompt-file flag overrides PR_SUMMARISE_PROMPT_FILE env var" {
+  setup_mock_gh_capturing_curl ""
+  local flag_file="$_MOCK_DIR/flag-prompt.txt"
+  local env_file="$_MOCK_DIR/env-prompt.txt"
+  echo "Flag prompt wins." > "$flag_file"
+  echo "Env var prompt loses." > "$env_file"
+
+  run bash -c "echo n | PR_SUMMARISE_PROMPT_FILE='$env_file' $SCRIPT --prompt-file '$flag_file' 123"
+  [ "$status" -eq 0 ]
+  grep -q "Flag prompt wins." "$_MOCK_DIR/curl_args"
+  grep -qv "Env var prompt loses." "$_MOCK_DIR/curl_args"
+}
