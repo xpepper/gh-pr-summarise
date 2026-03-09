@@ -46,6 +46,10 @@ make integration-test
   overwriting human-written descriptions.
 - **Link-only detection** — if the existing PR body is just a URL (e.g. a YouTrack or
   Jira link), the generated description is appended rather than skipped.
+- **Custom prompt** — `--prompt-file PATH` (short: `-p`) or the `PR_SUMMARISE_PROMPT_FILE`
+  env var lets callers supply their own system prompt. The flag takes precedence over the
+  env var. The file must exist and be readable; missing files are rejected with an error
+  before any API call is made.
 
 ## Behaviour Matrix
 

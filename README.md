@@ -40,6 +40,7 @@ gh pr-summarise --force
 | `--max-diff-chars` | `-n` | `28000` | Diff truncation limit (~7k tokens, under GitHub Models' 8k cap). |
 | `--yes` | `-y` | — | Apply without asking for confirmation. |
 | `--force` | `-f` | — | Generate even if a human-written description already exists. |
+| `--prompt-file` | `-p` | — | Path to a file containing a custom system prompt. Overrides `PR_SUMMARISE_PROMPT_FILE`. |
 | `--help` | `-h` | — | Show help. |
 | `--version` | `-v` | — | Print version and exit. |
 
@@ -58,11 +59,14 @@ The tool detects its own output via an HTML comment marker (`<!-- pr-summarise -
 
 ## Configuration
 
-One environment variable is supported for advanced use:
+Environment variables for advanced use:
 
 ```bash
 # Org-attributed usage (tracks API consumption against your org's quota)
 export PR_SUMMARISE_ENDPOINT="https://models.github.ai/orgs/<YOUR_ORG>/inference/chat/completions"
+
+# Custom system prompt loaded from a file (overridden by --prompt-file)
+export PR_SUMMARISE_PROMPT_FILE="/path/to/my-prompt.txt"
 ```
 
 ## Requirements
