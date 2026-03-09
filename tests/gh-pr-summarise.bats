@@ -178,7 +178,7 @@ EOF
 
   cat > "$mock_dir/curl" <<EOF
 #!/usr/bin/env bash
-printf '%s\n' "\$@" > "$mock_dir/curl_args"
+printf '%s\n' "\$@" > "$BATS_TEST_TMPDIR/curl_args"
 cat <<'JSON'
 {"choices":[{"message":{"content":"Generated summary."}}]}
 JSON
@@ -196,7 +196,7 @@ EOF
 
   run bash -c "echo n | $SCRIPT --prompt-file '$prompt_file' 123"
   [ "$status" -eq 0 ]
-  grep -q "My totally custom prompt instructions." "$_MOCK_DIR/curl_args"
+  grep -q "My totally custom prompt instructions." "$BATS_TEST_TMPDIR/curl_args"
 }
 
 @test "PR_SUMMARISE_PROMPT_FILE env var is used when no flag is given" {
@@ -206,7 +206,7 @@ EOF
 
   run bash -c "echo n | PR_SUMMARISE_PROMPT_FILE='$prompt_file' $SCRIPT 123"
   [ "$status" -eq 0 ]
-  grep -q "Env var custom prompt." "$_MOCK_DIR/curl_args"
+  grep -q "Env var custom prompt." "$BATS_TEST_TMPDIR/curl_args"
 }
 
 @test "--prompt-file flag overrides PR_SUMMARISE_PROMPT_FILE env var" {
@@ -218,8 +218,8 @@ EOF
 
   run bash -c "echo n | PR_SUMMARISE_PROMPT_FILE='$env_file' $SCRIPT --prompt-file '$flag_file' 123"
   [ "$status" -eq 0 ]
-  grep -q "Flag prompt wins." "$_MOCK_DIR/curl_args"
-  ! grep -q "Env var prompt loses." "$_MOCK_DIR/curl_args"
+  grep -q "Flag prompt wins." "$BATS_TEST_TMPDIR/curl_args"
+  ! grep -q "Env var prompt loses." "$BATS_TEST_TMPDIR/curl_args"
 }
 
 @test "default prompt instructs the model not to wrap output in a code fence" {
@@ -227,7 +227,7 @@ EOF
 
   run bash -c "echo n | $SCRIPT 123"
   [ "$status" -eq 0 ]
-  grep -q "code fence\|backtick\|triple" "$_MOCK_DIR/curl_args"
+  grep -q "code fence\|backtick\|triple" "$BATS_TEST_TMPDIR/curl_args"
 }
 
 @test "--help documents --prompt-file and PR_SUMMARISE_PROMPT_FILE" {
