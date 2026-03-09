@@ -140,6 +140,18 @@ if [[ -z "$DIFF" ]]; then
   exit 1
 fi
 
+# ── Resolve prompt ─────────────────────────────────────────────────────────────
+if [[ -n "$PROMPT_FILE" ]]; then
+  PROMPT_TEXT="$(cat "$PROMPT_FILE")"
+else
+  PROMPT_TEXT="Write a concise GitHub PR description in Markdown for this diff.
+Format:
+1) One short summary paragraph.
+2) A \"## Changes\" section with bullet points.
+3) A \"## Notes for reviewers\" section (optional, only if useful).
+Output only Markdown, nothing else."
+fi
+
 # ── Call GitHub Models ────────────────────────────────────────────────────────
 echo "Generating summary via GitHub Models ($MODEL)..."
 RESPONSE=$(curl -sS -L "$ENDPOINT" \
@@ -148,21 +160,16 @@ RESPONSE=$(curl -sS -L "$ENDPOINT" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
   -H "Content-Type: application/json" \
   -d "$(jq -n \
-    --arg model "$MODEL" \
-    --arg diff  "$DIFF" \
+    --arg model  "$MODEL" \
+    --arg prompt "$PROMPT_TEXT" \
+    --arg diff   "$DIFF" \
     '{
       model: $model,
       temperature: 0.2,
       max_tokens: 500,
       messages: [{
         role: "user",
-        content:
-          "Write a concise GitHub PR description in Markdown for this diff.\n" +
-          "Format:\n" +
-          "1) One short summary paragraph.\n" +
-          "2) A \"## Changes\" section with bullet points.\n" +
-          "3) A \"## Notes for reviewers\" section (optional, only if useful).\n" +
-          "Output only Markdown, nothing else.\n\n" + $diff
+        content: $prompt + "\n\n" + $diff
       }]
     }')")
 

@@ -156,3 +156,46 @@ Previous summary.
   [ "$status" -eq 1 ]
   [[ "$output" == *"prompt file not found"* ]]
 }
+
+# Sets up mocks like setup_mock_gh but curl saves its args for inspection.
+setup_mock_gh_capturing_curl() {
+  local body="$1"
+  local mock_dir
+  mock_dir="$(mktemp -d)"
+  cat > "$mock_dir/gh" <<EOF
+#!/usr/bin/env bash
+if [[ "\$*" == *"pr view"* ]]; then
+  echo '$body'
+elif [[ "\$*" == *"pr diff"* ]]; then
+  echo "diff --git a/foo b/foo"
+elif [[ "\$*" == *"auth token"* ]]; then
+  echo "fake-token"
+else
+  echo ""
+fi
+EOF
+  chmod +x "$mock_dir/gh"
+
+  cat > "$mock_dir/curl" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$@" > "$mock_dir/curl_args"
+cat <<'JSON'
+{"choices":[{"message":{"content":"Generated summary."}}]}
+JSON
+EOF
+  chmod +x "$mock_dir/curl"
+
+  export PATH="$mock_dir:$PATH"
+  export _MOCK_DIR="$mock_dir"
+}
+
+@test "--prompt-file uses custom prompt text in API call" {
+  setup_mock_gh_capturing_curl ""
+  local prompt_file
+  prompt_file="$(mktemp)"
+  echo "My totally custom prompt instructions." > "$prompt_file"
+
+  run bash -c "echo n | $SCRIPT --prompt-file '$prompt_file' 123"
+  [ "$status" -eq 0 ]
+  grep -q "My totally custom prompt instructions." "$_MOCK_DIR/curl_args"
+}
