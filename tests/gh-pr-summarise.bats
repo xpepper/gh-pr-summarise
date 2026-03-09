@@ -219,7 +219,7 @@ EOF
   run bash -c "echo n | PR_SUMMARISE_PROMPT_FILE='$env_file' $SCRIPT --prompt-file '$flag_file' 123"
   [ "$status" -eq 0 ]
   grep -q "Flag prompt wins." "$_MOCK_DIR/curl_args"
-  grep -qv "Env var prompt loses." "$_MOCK_DIR/curl_args"
+  ! grep -q "Env var prompt loses." "$_MOCK_DIR/curl_args"
 }
 
 @test "--help documents --prompt-file and PR_SUMMARISE_PROMPT_FILE" {
