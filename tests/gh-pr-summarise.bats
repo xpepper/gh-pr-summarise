@@ -150,3 +150,9 @@ Previous summary.
   [ "$status" -eq 0 ]
   [[ "$output" == *"https://example.atlassian.net/browse/PROJ-123"* ]]
 }
+
+@test "--prompt-file with missing file exits 1 with clear error" {
+  run "$SCRIPT" --prompt-file /nonexistent/prompt.txt 123
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"prompt file not found"* ]]
+}

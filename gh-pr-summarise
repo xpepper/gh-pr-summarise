@@ -20,6 +20,7 @@ ENDPOINT="${PR_SUMMARISE_ENDPOINT:-https://models.github.ai/inference/chat/compl
 
 YES=false
 FORCE=false
+PROMPT_FILE="${PR_SUMMARISE_PROMPT_FILE:-}"
 PR=""
 REPO_ARGS=()
 
@@ -69,6 +70,8 @@ while [[ $# -gt 0 ]]; do
       YES=true; shift ;;
     -f|--force)
       FORCE=true; shift ;;
+    -p|--prompt-file)
+      PROMPT_FILE="$2"; shift 2 ;;
     -*)
       echo "Error: unknown option: $1" >&2; echo; usage >&2; exit 1 ;;
     *)
@@ -78,6 +81,12 @@ while [[ $# -gt 0 ]]; do
       PR="$1"; shift ;;
   esac
 done
+
+# ── Validate prompt file ───────────────────────────────────────────────────────
+if [[ -n "$PROMPT_FILE" && ! -r "$PROMPT_FILE" ]]; then
+  echo "Error: prompt file not found or not readable: $PROMPT_FILE" >&2
+  exit 1
+fi
 
 # ── Resolve PR number ─────────────────────────────────────────────────────────
 if [[ -z "$PR" ]]; then
