@@ -191,8 +191,7 @@ EOF
 
 @test "--prompt-file uses custom prompt text in API call" {
   setup_mock_gh_capturing_curl ""
-  local prompt_file
-  prompt_file="$(mktemp)"
+  local prompt_file="$_MOCK_DIR/prompt.txt"
   echo "My totally custom prompt instructions." > "$prompt_file"
 
   run bash -c "echo n | $SCRIPT --prompt-file '$prompt_file' 123"
