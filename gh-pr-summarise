@@ -42,6 +42,9 @@ Options:
   -n, --max-diff-chars N        Diff truncation limit in characters (default: $MAX_DIFF_CHARS)
   -y, --yes                     Apply without asking for confirmation
   -f, --force                   Generate even if a human-written description exists
+  -p, --prompt-file PATH        Path to a file containing a custom prompt.
+                                The diff is always appended after the prompt text.
+                                Overrides PR_SUMMARISE_PROMPT_FILE.
   -h, --help                    Show this help
   -v, --version                 Show version
 
@@ -49,6 +52,8 @@ Environment variables:
   PR_SUMMARISE_ENDPOINT         Override the GitHub Models API endpoint.
                                 Useful for org-attributed usage:
                                 https://models.github.ai/orgs/<ORG>/inference/chat/completions
+  PR_SUMMARISE_PROMPT_FILE      Path to a file containing a custom prompt.
+                                Overridden by --prompt-file.
 EOF
 }
 

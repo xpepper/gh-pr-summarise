@@ -221,3 +221,10 @@ EOF
   grep -q "Flag prompt wins." "$_MOCK_DIR/curl_args"
   grep -qv "Env var prompt loses." "$_MOCK_DIR/curl_args"
 }
+
+@test "--help documents --prompt-file and PR_SUMMARISE_PROMPT_FILE" {
+  run "$SCRIPT" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--prompt-file"* ]]
+  [[ "$output" == *"PR_SUMMARISE_PROMPT_FILE"* ]]
+}
