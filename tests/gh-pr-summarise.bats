@@ -193,7 +193,7 @@ while [[ $# -gt 0 ]]; do
   fi
 done
 python3 -c 'import sys,json;d=json.loads(sys.argv[1]);print(json.dumps({"choices":[{"message":{"content":d["messages"][0]["content"]}}]}))' "$request_body" 2>/dev/null \
-  || echo '{"choices":[{"message":{"content":"Generated summary."}}]}'
+  || printf '{"choices":[{"message":{"content":"MOCK_FALLBACK:body_len=%d"}}]}' "${#request_body}"
 CURLEOF
   chmod +x "$mock_dir/curl"
 
