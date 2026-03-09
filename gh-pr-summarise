@@ -154,7 +154,7 @@ Format:
 1) One short summary paragraph.
 2) A \"## Changes\" section with bullet points.
 3) A \"## Notes for reviewers\" section (optional, only if useful).
-Output only Markdown, nothing else."
+Output only raw Markdown text. Do not wrap the output in a code fence or backtick block."
 fi
 
 # ── Call GitHub Models ────────────────────────────────────────────────────────

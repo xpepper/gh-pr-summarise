@@ -222,6 +222,14 @@ EOF
   ! grep -q "Env var prompt loses." "$_MOCK_DIR/curl_args"
 }
 
+@test "default prompt instructs the model not to wrap output in a code fence" {
+  setup_mock_gh_capturing_curl ""
+
+  run bash -c "echo n | $SCRIPT 123"
+  [ "$status" -eq 0 ]
+  grep -q "code fence\|backtick\|triple" "$_MOCK_DIR/curl_args"
+}
+
 @test "--help documents --prompt-file and PR_SUMMARISE_PROMPT_FILE" {
   run "$SCRIPT" --help
   [ "$status" -eq 0 ]
