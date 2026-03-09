@@ -198,3 +198,13 @@ EOF
   [ "$status" -eq 0 ]
   grep -q "My totally custom prompt instructions." "$_MOCK_DIR/curl_args"
 }
+
+@test "PR_SUMMARISE_PROMPT_FILE env var is used when no flag is given" {
+  setup_mock_gh_capturing_curl ""
+  local prompt_file="$_MOCK_DIR/env-prompt.txt"
+  echo "Env var custom prompt." > "$prompt_file"
+
+  run bash -c "echo n | PR_SUMMARISE_PROMPT_FILE='$prompt_file' $SCRIPT 123"
+  [ "$status" -eq 0 ]
+  grep -q "Env var custom prompt." "$_MOCK_DIR/curl_args"
+}
