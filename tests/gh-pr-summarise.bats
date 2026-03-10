@@ -265,17 +265,13 @@ EOF
 @test "automatically falls back to next model on rate_limit_exceeded" {
   setup_mock_gh ""
 
-  # First call returns rate_limit_exceeded; second call succeeds
-  local counter_file
-  counter_file="$(mktemp)"
-  echo "0" > "$counter_file"
+  local sentinel
+  sentinel="$(mktemp -d)/called"   # path that does NOT yet exist
 
   cat > "$_MOCK_DIR/curl" <<EOF
 #!/usr/bin/env bash
-count=\$(cat "$counter_file")
-count=\$((count + 1))
-echo "\$count" > "$counter_file"
-if [[ "\$count" -eq 1 ]]; then
+if [[ ! -e "$sentinel" ]]; then
+  touch "$sentinel"
   echo '{"error":{"code":"rate_limit_exceeded","message":"Rate limit reached for openai/gpt-4.1"}}'
 else
   echo '{"choices":[{"message":{"content":"summary from fallback model"}}]}'
@@ -285,6 +281,21 @@ EOF
 
   run bash -c "echo n | bash '$SCRIPT' 123"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Rate limit"* ]] || [[ "$output" == *"rate limit"* ]] || [[ "$output" == *"Retrying"* ]] || [[ "$output" == *"retrying"* ]]
+  [[ "$output" == *"Rate limit"* ]]
   [[ "$output" == *"summary from fallback model"* ]]
+}
+
+@test "exits with helpful message when all fallback models are also rate-limited" {
+  setup_mock_gh ""
+
+  cat > "$_MOCK_DIR/curl" <<'EOF'
+#!/usr/bin/env bash
+echo '{"error":{"code":"rate_limit_exceeded","message":"Rate limit reached"}}'
+EOF
+  chmod +x "$_MOCK_DIR/curl"
+
+  run bash "$SCRIPT" 123
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"rate limit"* ]] || [[ "$output" == *"Rate limit"* ]]
+  [[ "$output" == *"PR_SUMMARISE_FALLBACK_MODELS"* ]]
 }

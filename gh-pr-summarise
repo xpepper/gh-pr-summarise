@@ -203,6 +203,12 @@ if [[ "$ERROR_CODE" == "rate_limit_exceeded" && -n "$FALLBACK_MODELS" ]]; then
   done
 fi
 
+if [[ "$ERROR_CODE" == "rate_limit_exceeded" ]]; then
+  echo "Error: rate limit reached for all models in the fallback chain." >&2
+  echo "Try again later or set PR_SUMMARISE_FALLBACK_MODELS to a different chain." >&2
+  exit 1
+fi
+
 SUMMARY=$(echo "$RESPONSE" | jq -r '.choices[0].message.content' 2>/dev/null) || SUMMARY=""
 
 if [[ -z "$SUMMARY" || "$SUMMARY" == "null" ]]; then
