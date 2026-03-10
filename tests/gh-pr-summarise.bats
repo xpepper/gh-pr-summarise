@@ -265,8 +265,7 @@ EOF
 @test "automatically falls back to next model on rate_limit_exceeded" {
   setup_mock_gh ""
 
-  local sentinel
-  sentinel="$(mktemp -d)/called"   # path that does NOT yet exist
+  local sentinel="$_MOCK_DIR/curl_called"   # inside mock dir, cleaned up by teardown
 
   cat > "$_MOCK_DIR/curl" <<EOF
 #!/usr/bin/env bash
@@ -296,6 +295,6 @@ EOF
 
   run bash "$SCRIPT" 123
   [ "$status" -ne 0 ]
-  [[ "$output" == *"rate limit"* ]] || [[ "$output" == *"Rate limit"* ]]
+  [[ "$output" == *"rate limit reached for all models"* ]]
   [[ "$output" == *"PR_SUMMARISE_FALLBACK_MODELS"* ]]
 }
