@@ -168,6 +168,7 @@ fi
 # ── Call GitHub Models (with fallback on rate limit) ─────────────────────────
 call_model() {
   local model="$1"
+  local tokens_param="${2:-max_tokens}"
   curl -sS -L "$ENDPOINT" \
     -H "Authorization: Bearer $(gh auth token)" \
     -H "Accept: application/vnd.github+json" \
@@ -177,10 +178,11 @@ call_model() {
       --arg model  "$model" \
       --arg prompt "$PROMPT_TEXT" \
       --arg diff   "$DIFF" \
+      --arg tparam "$tokens_param" \
       '{
         model: $model,
         temperature: 0.2,
-        max_tokens: 500,
+        ($tparam): 500,
         messages: [{
           role: "user",
           content: "\($prompt)\n\n\($diff)"
@@ -188,8 +190,22 @@ call_model() {
       }')"
 }
 
+# Calls call_model and retries with max_completion_tokens if the model rejects max_tokens.
+invoke_model() {
+  local model="$1"
+  local response error_code error_param
+  response=$(call_model "$model")
+  error_code=$(echo "$response" | jq -r '.error.code // ""' 2>/dev/null) || error_code=""
+  error_param=$(echo "$response" | jq -r '.error.param // ""' 2>/dev/null) || error_param=""
+  if [[ "$error_code" == "unsupported_parameter" && "$error_param" == "max_tokens" ]]; then
+    echo "Model $model requires max_completion_tokens, retrying..." >&2
+    response=$(call_model "$model" "max_completion_tokens")
+  fi
+  echo "$response"
+}
+
 echo "Generating summary via GitHub Models ($MODEL)..."
-RESPONSE=$(call_model "$MODEL")
+RESPONSE=$(invoke_model "$MODEL")
 ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""' 2>/dev/null) || ERROR_CODE=""
 
 if [[ ( "$ERROR_CODE" == "rate_limit_exceeded" || "$RESPONSE" == *"Too many requests"* ) && -n "$FALLBACK_MODELS" ]]; then
@@ -197,7 +213,7 @@ if [[ ( "$ERROR_CODE" == "rate_limit_exceeded" || "$RESPONSE" == *"Too many requ
   for fallback in "${FALLBACKS[@]}"; do
     echo "Rate limit reached for $MODEL. Retrying with $fallback..." >&2
     MODEL="$fallback"
-    RESPONSE=$(call_model "$MODEL")
+    RESPONSE=$(invoke_model "$MODEL")
     ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""' 2>/dev/null) || ERROR_CODE=""
     [[ "$ERROR_CODE" != "rate_limit_exceeded" ]] && break
   done

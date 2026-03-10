@@ -326,3 +326,53 @@ EOF
   [[ "$output" == *"rate limit reached for all models"* ]]
   [[ "$output" == *"PR_SUMMARISE_FALLBACK_MODELS"* ]]
 }
+
+@test "retries with max_completion_tokens when model rejects max_tokens" {
+  setup_mock_gh ""
+
+  local sentinel="$_MOCK_DIR/curl_called"
+
+  cat > "$_MOCK_DIR/curl" <<EOF
+#!/usr/bin/env bash
+if [[ ! -e "$sentinel" ]]; then
+  touch "$sentinel"
+  echo '{"error":{"code":"unsupported_parameter","message":"max_tokens not supported","param":"max_tokens","type":"invalid_request_error"}}'
+else
+  echo '{"choices":[{"message":{"content":"summary via max_completion_tokens"}}]}'
+fi
+EOF
+  chmod +x "$_MOCK_DIR/curl"
+
+  run bash -c "echo n | bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"summary via max_completion_tokens"* ]]
+}
+
+@test "retry request for max_completion_tokens models sends max_completion_tokens field" {
+  setup_mock_gh ""
+
+  local sentinel="$_MOCK_DIR/curl_called"
+
+  # First call returns unsupported_parameter; second call echoes the request body
+  # as the summary so we can inspect what was sent.
+  cat > "$_MOCK_DIR/curl" <<EOF
+#!/usr/bin/env bash
+if [[ ! -e "$sentinel" ]]; then
+  touch "$sentinel"
+  echo '{"error":{"code":"unsupported_parameter","message":"max_tokens not supported","param":"max_tokens","type":"invalid_request_error"}}'
+else
+  request_body=""
+  while [[ \$# -gt 0 ]]; do
+    if [[ "\$1" == "-d" ]]; then request_body="\$2"; shift 2; else shift; fi
+  done
+  python3 -c 'import sys,json;d=json.loads(sys.argv[1]);print(json.dumps({"choices":[{"message":{"content":d["messages"][0]["content"]+" KEYS:"+",".join(d.keys())}}]}))' "\$request_body" 2>/dev/null \
+    || echo '{"choices":[{"message":{"content":"fallback"}}]}'
+fi
+EOF
+  chmod +x "$_MOCK_DIR/curl"
+
+  run bash -c "echo n | bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"max_completion_tokens"* ]]
+  [[ "$output" != *"\"max_tokens\""* ]]
+}
