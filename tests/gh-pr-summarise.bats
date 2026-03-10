@@ -124,6 +124,13 @@ teardown() {
   [[ "$output" == *"Generated description"* ]]
 }
 
+@test "output banner includes the active model name" {
+  setup_mock_gh ""
+  run bash -c "echo n | $SCRIPT --model openai/gpt-4o-mini 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Generated description (openai/gpt-4o-mini)"* ]]
+}
+
 @test "preserves tracker URL prefix in generated body" {
   setup_mock_gh "https://example.atlassian.net/browse/PROJ-123"
   run bash -c "echo n | $SCRIPT 123"
