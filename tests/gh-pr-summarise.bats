@@ -244,3 +244,20 @@ CURLEOF
   [[ "$output" == *"--prompt-file"* ]]
   [[ "$output" == *"PR_SUMMARISE_PROMPT_FILE"* ]]
 }
+
+@test "shows actionable hint when model returns tokens_limit_reached" {
+  setup_mock_gh ""
+
+  # Override the curl stub to return a tokens_limit_reached error
+  cat > "$_MOCK_DIR/curl" <<'EOF'
+#!/usr/bin/env bash
+echo '{"error":{"code":"tokens_limit_reached","message":"Request body too large for deepseek-v3-0324 model. Max size: 4000 tokens."}}'
+EOF
+  chmod +x "$_MOCK_DIR/curl"
+
+  run bash "$SCRIPT" 123
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"too large"* ]]
+  [[ "$output" == *"--max-diff-chars"* ]]
+  [[ "$output" == *"gh models list"* ]]
+}

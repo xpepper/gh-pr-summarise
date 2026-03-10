@@ -181,8 +181,16 @@ RESPONSE=$(curl -sS -L "$ENDPOINT" \
 SUMMARY=$(echo "$RESPONSE" | jq -r '.choices[0].message.content' 2>/dev/null) || SUMMARY=""
 
 if [[ -z "$SUMMARY" || "$SUMMARY" == "null" ]]; then
-  echo "Error: no summary returned by GitHub Models. Raw response:" >&2
-  echo "$RESPONSE" >&2
+  ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""' 2>/dev/null)
+  if [[ "$ERROR_CODE" == "tokens_limit_reached" ]]; then
+    ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error.message // ""' 2>/dev/null)
+    echo "Error: $ERROR_MSG" >&2
+    echo "Hint: reduce the diff size with --max-diff-chars (current: $MAX_DIFF_CHARS)" >&2
+    echo "      or choose a model with a larger context window — run 'gh models list'" >&2
+  else
+    echo "Error: no summary returned by GitHub Models. Raw response:" >&2
+    echo "$RESPONSE" >&2
+  fi
   exit 1
 fi
 
