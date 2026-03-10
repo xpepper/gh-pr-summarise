@@ -36,7 +36,7 @@ gh pr-summarise --force
 
 | Flag | Short | Default | Description |
 |---|---|---|---|
-| `--model` | `-m` | `openai/gpt-4.1` | Model to use. Run `gh models list` to see available models. |
+| `--model` | `-m` | `openai/gpt-4.1` | Model to use. To list available models, install the optional [`gh-models`](https://github.com/github/gh-models) extension and run `gh models list`. |
 | `--max-diff-chars` | `-n` | `28000` | Diff truncation limit (~7k tokens, under GitHub Models' 8k cap). |
 | `--yes` | `-y` | — | Apply without asking for confirmation. |
 | `--force` | `-f` | — | Generate even if a human-written description already exists. |
