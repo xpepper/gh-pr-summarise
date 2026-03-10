@@ -124,3 +124,15 @@ make integration-test
 ```
 
 > `make integration-test` is intentionally excluded from `make test` to avoid unintended API calls and PR edits in CI.
+
+To test compatibility across all models available in GitHub Models, run the matrix script:
+
+```bash
+# Test every model from `gh models list` against the test PR
+bash scripts/model-matrix.sh
+
+# Test against a different PR or with a smaller diff limit
+bash scripts/model-matrix.sh --test-pr https://github.com/owner/repo/pull/123 --max-diff-chars 500
+```
+
+Results and known compatibility notes are documented in [`docs/model-compatibility.md`](docs/model-compatibility.md).
