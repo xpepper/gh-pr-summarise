@@ -67,6 +67,12 @@ export PR_SUMMARISE_ENDPOINT="https://models.github.ai/orgs/<YOUR_ORG>/inference
 
 # Custom system prompt loaded from a file (overridden by --prompt-file)
 export PR_SUMMARISE_PROMPT_FILE="/path/to/my-prompt.txt"
+
+# Disable automatic model fallback on rate limits
+export PR_SUMMARISE_FALLBACK_MODELS=""
+
+# Use a custom fallback chain
+export PR_SUMMARISE_FALLBACK_MODELS="openai/gpt-4o,phi-4"
 ```
 
 ## Requirements

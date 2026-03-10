@@ -18,6 +18,10 @@ ENDPOINT="${PR_SUMMARISE_ENDPOINT:-https://models.github.ai/inference/chat/compl
 # For org attribution, set:
 # export PR_SUMMARISE_ENDPOINT="https://models.github.ai/orgs/<ORG>/inference/chat/completions"
 
+# Comma-separated fallback chain used when the primary model hits rate limits.
+# Override with PR_SUMMARISE_FALLBACK_MODELS env var; set to "" to disable.
+FALLBACK_MODELS="${PR_SUMMARISE_FALLBACK_MODELS:-openai/gpt-4o,openai/gpt-4o-mini}"
+
 YES=false
 FORCE=false
 PROMPT_FILE="${PR_SUMMARISE_PROMPT_FILE:-}"
@@ -54,6 +58,10 @@ Environment variables:
                                 https://models.github.ai/orgs/<ORG>/inference/chat/completions
   PR_SUMMARISE_PROMPT_FILE      Path to a file containing a custom prompt.
                                 Overridden by --prompt-file.
+  PR_SUMMARISE_FALLBACK_MODELS  Comma-separated fallback model chain used when the
+                                primary model hits rate limits.
+                                Default: openai/gpt-4o,openai/gpt-4o-mini
+                                Set to "" to disable automatic fallback.
 EOF
 }
 
@@ -157,31 +165,47 @@ Format:
 Output only raw Markdown text. Do not wrap the output in a code fence or backtick block."
 fi
 
-# ── Call GitHub Models ────────────────────────────────────────────────────────
+# ── Call GitHub Models (with fallback on rate limit) ─────────────────────────
+call_model() {
+  local model="$1"
+  curl -sS -L "$ENDPOINT" \
+    -H "Authorization: Bearer $(gh auth token)" \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    -H "Content-Type: application/json" \
+    -d "$(jq -n \
+      --arg model  "$model" \
+      --arg prompt "$PROMPT_TEXT" \
+      --arg diff   "$DIFF" \
+      '{
+        model: $model,
+        temperature: 0.2,
+        max_tokens: 500,
+        messages: [{
+          role: "user",
+          content: "\($prompt)\n\n\($diff)"
+        }]
+      }')"
+}
+
 echo "Generating summary via GitHub Models ($MODEL)..."
-RESPONSE=$(curl -sS -L "$ENDPOINT" \
-  -H "Authorization: Bearer $(gh auth token)" \
-  -H "Accept: application/vnd.github+json" \
-  -H "X-GitHub-Api-Version: 2022-11-28" \
-  -H "Content-Type: application/json" \
-  -d "$(jq -n \
-    --arg model  "$MODEL" \
-    --arg prompt "$PROMPT_TEXT" \
-    --arg diff   "$DIFF" \
-    '{
-      model: $model,
-      temperature: 0.2,
-      max_tokens: 500,
-      messages: [{
-        role: "user",
-        content: "\($prompt)\n\n\($diff)"
-      }]
-    }')")
+RESPONSE=$(call_model "$MODEL")
+ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""' 2>/dev/null)
+
+if [[ "$ERROR_CODE" == "rate_limit_exceeded" && -n "$FALLBACK_MODELS" ]]; then
+  IFS=',' read -ra FALLBACKS <<< "$FALLBACK_MODELS"
+  for fallback in "${FALLBACKS[@]}"; do
+    echo "Rate limit reached for $MODEL. Retrying with $fallback..." >&2
+    MODEL="$fallback"
+    RESPONSE=$(call_model "$MODEL")
+    ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""' 2>/dev/null)
+    [[ "$ERROR_CODE" != "rate_limit_exceeded" ]] && break
+  done
+fi
 
 SUMMARY=$(echo "$RESPONSE" | jq -r '.choices[0].message.content' 2>/dev/null) || SUMMARY=""
 
 if [[ -z "$SUMMARY" || "$SUMMARY" == "null" ]]; then
-  ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""' 2>/dev/null)
   if [[ "$ERROR_CODE" == "tokens_limit_reached" ]]; then
     ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error.message // ""' 2>/dev/null)
     echo "Error: $ERROR_MSG" >&2

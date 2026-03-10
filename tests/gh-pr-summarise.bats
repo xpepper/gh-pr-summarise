@@ -261,3 +261,30 @@ EOF
   [[ "$output" == *"--max-diff-chars"* ]]
   [[ "$output" == *"gh models list"* ]]
 }
+
+@test "automatically falls back to next model on rate_limit_exceeded" {
+  setup_mock_gh ""
+
+  # First call returns rate_limit_exceeded; second call succeeds
+  local counter_file
+  counter_file="$(mktemp)"
+  echo "0" > "$counter_file"
+
+  cat > "$_MOCK_DIR/curl" <<EOF
+#!/usr/bin/env bash
+count=\$(cat "$counter_file")
+count=\$((count + 1))
+echo "\$count" > "$counter_file"
+if [[ "\$count" -eq 1 ]]; then
+  echo '{"error":{"code":"rate_limit_exceeded","message":"Rate limit reached for openai/gpt-4.1"}}'
+else
+  echo '{"choices":[{"message":{"content":"summary from fallback model"}}]}'
+fi
+EOF
+  chmod +x "$_MOCK_DIR/curl"
+
+  run bash -c "echo n | bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Rate limit"* ]] || [[ "$output" == *"rate limit"* ]] || [[ "$output" == *"Retrying"* ]] || [[ "$output" == *"retrying"* ]]
+  [[ "$output" == *"summary from fallback model"* ]]
+}
