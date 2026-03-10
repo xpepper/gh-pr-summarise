@@ -32,293 +32,85 @@ Free-tier GitHub Models caps: ~150 req/day for gpt-4o-mini, ~50/day for gpt-4o,
 2. `openai/gpt-4o` — strong, 50/day free
 3. `openai/gpt-4o-mini` — fast, 150/day free, sufficient for most PRs
 
-### Key script section (lines 181–187 of `gh-pr-summarise`)
-```bash
-SUMMARY=$(echo "$RESPONSE" | jq -r '.choices[0].message.content' 2>/dev/null) || SUMMARY=""
+---
 
-if [[ -z "$SUMMARY" || "$SUMMARY" == "null" ]]; then
-  echo "Error: no summary returned by GitHub Models. Raw response:" >&2
-  echo "$RESPONSE" >&2
-  exit 1
-fi
-```
-All three tasks modify this section (and the curl call above it).
+## ✅ Task 1: Actionable error message for `tokens_limit_reached` — DONE
+
+**Commits:** `515d832`
+
+**What was implemented:**
+- Detect `tokens_limit_reached` in the API response and show the model's actual error message
+- Hint: reduce diff with `--max-diff-chars` (showing current value)
+- Hint: run `gh models list` to find a larger-context model
+- Generic "raw response" fallback preserved for all other error types
+
+**Deviations from plan:**
+- Plan's hint suggested `--model openai/gpt-4.1` (the default model — misleading). Changed to
+  `run 'gh models list'` instead.
+- Test assertion tightened: removed `||` fallback, added assertion on `gh models list` hint line.
 
 ---
 
-## Task 1: Actionable error message for `tokens_limit_reached`
+## ✅ Task 2: Automatic fallback on `rate_limit_exceeded` — DONE
 
-**Files:**
-- Modify: `gh-pr-summarise` (around line 181)
-- Test: `tests/gh-pr-summarise.bats`
+**Commits:** `4e97f6d`, `7475098`, `9a8a1dd`, `2f635d4`
 
-**Context:** Currently both `tokens_limit_reached` and any other API error fall through to the
-same generic "no summary returned" message. We want to detect this specific error code and
-show a helpful hint.
+**What was implemented:**
+- `FALLBACK_MODELS` variable (default: `openai/gpt-4o,openai/gpt-4o-mini`), overridable via
+  `PR_SUMMARISE_FALLBACK_MODELS` env var
+- `call_model()` helper function extracted from the inline curl call
+- Fallback loop: on `rate_limit_exceeded`, iterates the chain with a stderr notice per attempt,
+  stops at first success
+- Exhausted chain: if all models are rate-limited, exits with a helpful message referencing
+  `PR_SUMMARISE_FALLBACK_MODELS`
+- `usage()` and `README.md` updated
 
-### Step 1: Write the failing test
+**Extra work beyond the plan (found via integration test):**
+- GitHub's infrastructure sometimes returns HTML `"Too many requests"` instead of a JSON error.
+  This crashed the script (`jq` exiting 5 via `set -euo pipefail`) and bypassed the fallback.
+  Fixed by:
+  - Adding `|| ERROR_CODE=""` / `|| ERROR_MSG=""` guards on all jq extractions
+  - Also triggering the fallback chain on `"Too many requests"` response body
+  - New test: `"falls back when API returns HTML Too many requests instead of JSON"`
 
-Add to `tests/gh-pr-summarise.bats` — place it near other API-error tests:
-
-```bash
-@test "shows actionable hint when model returns tokens_limit_reached" {
-  # Arrange: mock curl to return a tokens_limit_reached error
-  mock_curl() {
-    echo '{"error":{"code":"tokens_limit_reached","message":"Request body too large for deepseek-v3-0324 model. Max size: 4000 tokens."}}'
-  }
-  export -f mock_curl
-  # Bats PATH trick: write a curl stub to a temp bin dir
-  local bin_dir
-  bin_dir="$(mktemp -d)"
-  printf '#!/usr/bin/env bash\nmock_curl "$@"\n' > "$bin_dir/curl"
-  chmod +x "$bin_dir/curl"
-
-  run env PATH="$bin_dir:$PATH" bash gh-pr-summarise 123
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"tokens_limit_reached"* ]] || [[ "$output" == *"too large"* ]]
-  [[ "$output" == *"--max-diff-chars"* ]]
-}
-```
-
-> **Note on bats mocking:** The existing tests use a shared `setup()` that stubs `gh` and
-> `curl`. Read the top of `tests/gh-pr-summarise.bats` to understand the existing stub pattern
-> before adding this test — adapt the new test to use the same approach.
-
-### Step 2: Run the test to verify it fails
-
-```bash
-bats tests/gh-pr-summarise.bats --filter "tokens_limit_reached"
-```
-Expected: FAILED — the current code prints the raw JSON, not the hint.
-
-### Step 3: Implement the fix in `gh-pr-summarise`
-
-Replace the error block (around lines 181–187):
-
-```bash
-SUMMARY=$(echo "$RESPONSE" | jq -r '.choices[0].message.content' 2>/dev/null) || SUMMARY=""
-
-if [[ -z "$SUMMARY" || "$SUMMARY" == "null" ]]; then
-  ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""' 2>/dev/null)
-  if [[ "$ERROR_CODE" == "tokens_limit_reached" ]]; then
-    ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error.message // ""' 2>/dev/null)
-    echo "Error: $ERROR_MSG" >&2
-    echo "Hint: reduce the diff size with --max-diff-chars (current: $MAX_DIFF_CHARS)" >&2
-    echo "      or switch to a model with a larger context window (e.g. --model openai/gpt-4.1)" >&2
-  else
-    echo "Error: no summary returned by GitHub Models. Raw response:" >&2
-    echo "$RESPONSE" >&2
-  fi
-  exit 1
-fi
-```
-
-### Step 4: Run the test to verify it passes
-
-```bash
-bats tests/gh-pr-summarise.bats --filter "tokens_limit_reached"
-```
-Expected: PASS
-
-### Step 5: Run the full test suite
-
-```bash
-make test
-```
-Expected: all previously passing tests still pass.
-
-### Step 6: Commit
-
-```bash
-git add gh-pr-summarise tests/gh-pr-summarise.bats
-git commit -m "feat(errors): show actionable hint for tokens_limit_reached errors"
-```
+**Deviations from plan:**
+- Plan's test used a counter file (cross-process, unreliable in CI). Changed to sentinel-file
+  pattern (`touch` + `-e`), which is CI-safe (documented gotcha in MEMORY.md).
+- README env var documented in Configuration section code block, not as an Options table row
+  (table is for CLI flags only — adding an env var there would be inconsistent).
 
 ---
 
-## Task 2: Automatic fallback on `rate_limit_exceeded`
+## ✅ Task 3: Ergonomic polish — DONE
 
-**Files:**
-- Modify: `gh-pr-summarise` (defaults section + API call section)
-- Test: `tests/gh-pr-summarise.bats`
+**Commits:** `f12d719`, `57055e8`
 
-**Context:** When the chosen model hits its daily free-tier request cap, the API returns
-an error with code `rate_limit_exceeded`. Instead of failing, the script should silently
-retry with the next model in a fallback chain, notifying the user.
+**What was implemented:**
+- Active model name shown in the output banner:
+  `──── Generated description (openai/gpt-4o-mini) ────...`
+- Test added asserting the model name appears with a non-default model
 
-### Step 1: Write the failing test
-
-```bash
-@test "automatically falls back to next model on rate_limit_exceeded" {
-  # First curl call returns rate_limit_exceeded; second succeeds
-  local call_count=0
-  mock_curl() {
-    call_count=$((call_count + 1))
-    if [[ $call_count -eq 1 ]]; then
-      echo '{"error":{"code":"rate_limit_exceeded","message":"Rate limit reached for openai/gpt-4.1"}}'
-    else
-      echo '{"choices":[{"message":{"content":"summary from fallback model"}}]}'
-    fi
-  }
-  export -f mock_curl
-  # ... (same bin_dir stub pattern as Task 1)
-
-  run env PATH="$bin_dir:$PATH" bash gh-pr-summarise 123
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"rate limit"* ]] || [[ "$output" == *"fallback"* ]] || [[ "$output" == *"retrying"* ]]
-  [[ "$output" == *"summary from fallback model"* ]]
-}
-```
-
-> Again, read the existing stub pattern in `tests/gh-pr-summarise.bats` and adapt accordingly.
-
-### Step 2: Run the test to verify it fails
-
-```bash
-bats tests/gh-pr-summarise.bats --filter "fallback"
-```
-Expected: FAILED.
-
-### Step 3: Implement the fallback chain
-
-**3a. Add fallback defaults near the top of the script** (after the existing `MODEL=` line):
-
-```bash
-# Comma-separated fallback chain used when the primary model hits rate limits.
-# Override with PR_SUMMARISE_FALLBACK_MODELS env var; set to "" to disable.
-FALLBACK_MODELS="${PR_SUMMARISE_FALLBACK_MODELS:-openai/gpt-4o,openai/gpt-4o-mini}"
-```
-
-**3b. Extract the API call into a helper function** (replace the existing curl block):
-
-```bash
-# ── Call GitHub Models (with fallback on rate limit) ─────────────────────────
-call_model() {
-  local model="$1"
-  curl -sS -L "$ENDPOINT" \
-    -H "Authorization: Bearer $(gh auth token)" \
-    -H "Accept: application/vnd.github+json" \
-    -H "X-GitHub-Api-Version: 2022-11-28" \
-    -H "Content-Type: application/json" \
-    -d "$(jq -n \
-      --arg model  "$model" \
-      --arg prompt "$PROMPT_TEXT" \
-      --arg diff   "$DIFF" \
-      '{
-        model: $model,
-        temperature: 0.2,
-        max_tokens: 500,
-        messages: [{
-          role: "user",
-          content: "\($prompt)\n\n\($diff)"
-        }]
-      }')"
-}
-
-echo "Generating summary via GitHub Models ($MODEL)..."
-RESPONSE=$(call_model "$MODEL")
-ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""' 2>/dev/null)
-
-if [[ "$ERROR_CODE" == "rate_limit_exceeded" && -n "$FALLBACK_MODELS" ]]; then
-  IFS=',' read -ra FALLBACKS <<< "$FALLBACK_MODELS"
-  for fallback in "${FALLBACKS[@]}"; do
-    echo "Rate limit reached for $MODEL. Retrying with $fallback..." >&2
-    MODEL="$fallback"
-    RESPONSE=$(call_model "$MODEL")
-    ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""' 2>/dev/null)
-    [[ "$ERROR_CODE" != "rate_limit_exceeded" ]] && break
-  done
-fi
-```
-
-**3c. Remove the old `echo "Generating summary..."` + curl block** — it is replaced above.
-
-### Step 4: Run the test to verify it passes
-
-```bash
-bats tests/gh-pr-summarise.bats --filter "fallback"
-```
-Expected: PASS
-
-### Step 5: Run the full test suite
-
-```bash
-make test
-```
-Expected: all tests pass.
-
-### Step 6: Document the new env var in usage()
-
-Add to the `usage()` function's "Environment variables" section:
-
-```
-  PR_SUMMARISE_FALLBACK_MODELS  Comma-separated fallback model chain used when the
-                                primary model hits rate limits.
-                                Default: openai/gpt-4o,openai/gpt-4o-mini
-                                Set to "" to disable automatic fallback.
-```
-
-Also add it to the README under the Configuration / Environment variables section.
-
-### Step 7: Commit
-
-```bash
-git add gh-pr-summarise README.md tests/gh-pr-summarise.bats
-git commit -m "feat(fallback): auto-retry with fallback models on rate_limit_exceeded"
-```
+**Deviations from plan:**
+- Plan listed `PR_SUMMARISE_FALLBACK_MODELS` options table row as part of Task 3 — this was
+  already handled in Task 2 (Configuration section, not the flags table).
+- Plan mentioned a `--json` output flag; this was out of scope and not implemented.
 
 ---
 
-## Task 3: Ergonomic polish
+## ✅ Docs & integration test improvements — DONE (beyond original plan)
 
-**Files:**
-- Modify: `gh-pr-summarise`
-- Modify: `README.md`
+**Commits:** `33c1ca6`, `56b8393`
 
-**Context:** Small UX improvements inspired by research into CLI ergonomics: (a) expose
-fallback model chain in help output; (b) surface the active model name in the final
-confirmation banner so users know which model was actually used when a fallback kicked in.
-
-### Step 1: Show the active model in the output banner
-
-In the "Review and confirm" section (around line 198), change:
-
-```bash
-echo "──── Generated description ────────────────────────────────────────────────"
-```
-
-to include the model that actually produced the output:
-
-```bash
-echo "──── Generated description ($MODEL) ──────────────────────────────────────"
-```
-
-This is especially useful when a fallback model was used.
-
-### Step 2: Run the test suite to confirm no regressions
-
-```bash
-make test
-```
-
-### Step 3: Update README Options table
-
-Add a row for the new env var:
-
-| `PR_SUMMARISE_FALLBACK_MODELS` | — | `openai/gpt-4o,openai/gpt-4o-mini` | Comma-separated fallback chain when rate limit is hit. Set to `""` to disable. |
-
-(Add this to the existing Configuration / Environment variables section.)
-
-### Step 4: Commit
-
-```bash
-git add gh-pr-summarise README.md
-git commit -m "feat(ux): show active model in output banner"
-```
+- `CLAUDE.md`: new Key Design Decisions for fallback chain and token-limit errors; Definition
+  of Done section added (`make test` + `make integration-test`)
+- `README.md`: `-n / --max-diff-chars` usage example added; `gpt-4.1-mini` example corrected
+  to `gpt-4o-mini`; new Behaviour subsections for rate-limit fallback and token-limit errors
+- Integration tests: added idempotency test (marker detected and replaced, not appended twice)
+  and tracker URL preservation test
 
 ---
 
-## Task 4: Manual model compatibility matrix (exploratory)
+## ✅ Task 4: Manual model compatibility matrix (exploratory) — DONE
 
 **Not a code task** — exploratory manual testing against the live API using the permanent test PR.
 
@@ -370,26 +162,16 @@ Create `docs/model-compatibility.md` with a table:
 3. **Response quality**: does the model produce a meaningful PR description, or gibberish?
 
 This informs future work: updating the default `--max-diff-chars`, adding per-model presets,
-and choosing the best fallback chain order (Task 2).
+and refining the fallback chain order.
 
 ---
 
 ## Testing Checklist
 
-After all three code tasks are done, do a manual smoke-test:
-
-```bash
-# Verify token-limit error message is helpful
-# (mock or use a model known to reject large diffs)
-
-# Verify fallback kicks in by temporarily setting an exhausted/invalid primary:
-PR_SUMMARISE_MODEL=openai/gpt-4.1 \
-PR_SUMMARISE_FALLBACK_MODELS=openai/gpt-4o-mini \
-  gh pr-summarise <PR_NUMBER>
-
-# Verify fallback can be disabled:
-PR_SUMMARISE_FALLBACK_MODELS="" gh pr-summarise <PR_NUMBER>
-```
+- [x] `make test` passes (26 unit tests, shellcheck clean)
+- [x] `make integration-test` passes (4 tests: skip human-written, generate+apply,
+      idempotency, tracker URL preservation)
+- [x] Task 4 manual matrix completed — results in `docs/model-compatibility.md`
 
 ---
 
