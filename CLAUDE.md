@@ -34,6 +34,12 @@ bats tests/gh-pr-summarise.bats
 make integration-test
 ```
 
+## Definition of Done
+
+A feature or fix is done when:
+1. `make test` passes (shellcheck + bats)
+2. `make integration-test` passes against the live API (test PR: https://github.com/xpepper/gh-pr-summarise/pull/1)
+
 ## Key Design Decisions
 
 - **Single Bash script** — no build step, no compiled binary, no extra runtime deps
@@ -50,6 +56,13 @@ make integration-test
   env var lets callers supply their own system prompt. The flag takes precedence over the
   env var. The file must exist and be readable; missing files are rejected with an error
   before any API call is made.
+- **Automatic rate-limit fallback** — on `rate_limit_exceeded`, retries automatically with
+  the next model in a comma-separated chain (`openai/gpt-4o,openai/gpt-4o-mini` by default).
+  Controlled via `PR_SUMMARISE_FALLBACK_MODELS`; set to `""` to disable. If all models in
+  the chain are exhausted, exits with a clear error referencing the env var.
+- **Actionable token-limit errors** — `tokens_limit_reached` responses surface the model's
+  actual error message plus hints to reduce the diff (`--max-diff-chars`) or discover
+  larger-context models (`gh models list`), instead of dumping raw JSON.
 
 ## Behaviour Matrix
 

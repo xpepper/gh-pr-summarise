@@ -23,7 +23,10 @@ gh pr-summarise 123
 gh pr-summarise https://github.com/owner/repo/pull/123
 
 # Override the model
-gh pr-summarise --model openai/gpt-4.1-mini
+gh pr-summarise --model openai/gpt-4o-mini
+
+# Limit the diff size sent to the model (useful for large PRs or models with small context)
+gh pr-summarise --max-diff-chars 10000
 
 # Skip the confirmation prompt (useful in scripts)
 gh pr-summarise --yes
@@ -56,6 +59,21 @@ gh pr-summarise --force
 Use `--force` to override the skip and generate anyway.
 
 The tool detects its own output via an HTML comment marker (`<!-- pr-summarise -->`) embedded at the end of every generated description. If you edit a generated description and want to protect your changes from being overwritten on the next run, remove that marker.
+
+### Rate limits and automatic fallback
+
+GitHub Models enforces per-model daily request limits on free accounts. When the primary model
+is rate-limited, the tool automatically retries with the next model in the fallback chain
+(`openai/gpt-4o` → `openai/gpt-4o-mini` by default) and prints a notice to stderr.
+
+If all models in the chain are rate-limited, the tool exits with a clear error and suggests
+adjusting `PR_SUMMARISE_FALLBACK_MODELS`.
+
+### Token limits
+
+If the diff is too large for the selected model, the tool shows an actionable error message
+with the model's actual limit and suggests reducing the diff with `--max-diff-chars` or
+running `gh models list` to find a model with a larger context window.
 
 ## Configuration
 
