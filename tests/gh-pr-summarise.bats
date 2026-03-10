@@ -291,6 +291,27 @@ EOF
   [[ "$output" == *"summary from fallback model"* ]]
 }
 
+@test "falls back when API returns HTML Too many requests instead of JSON" {
+  setup_mock_gh ""
+
+  local sentinel="$_MOCK_DIR/curl_called"
+
+  cat > "$_MOCK_DIR/curl" <<EOF
+#!/usr/bin/env bash
+if [[ ! -e "$sentinel" ]]; then
+  touch "$sentinel"
+  echo 'Too many requests. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service.'
+else
+  echo '{"choices":[{"message":{"content":"summary from fallback model"}}]}'
+fi
+EOF
+  chmod +x "$_MOCK_DIR/curl"
+
+  run bash -c "echo n | bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"summary from fallback model"* ]]
+}
+
 @test "exits with helpful message when all fallback models are also rate-limited" {
   setup_mock_gh ""
 

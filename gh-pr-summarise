@@ -190,20 +190,20 @@ call_model() {
 
 echo "Generating summary via GitHub Models ($MODEL)..."
 RESPONSE=$(call_model "$MODEL")
-ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""' 2>/dev/null)
+ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""' 2>/dev/null) || ERROR_CODE=""
 
-if [[ "$ERROR_CODE" == "rate_limit_exceeded" && -n "$FALLBACK_MODELS" ]]; then
+if [[ ( "$ERROR_CODE" == "rate_limit_exceeded" || "$RESPONSE" == *"Too many requests"* ) && -n "$FALLBACK_MODELS" ]]; then
   IFS=',' read -ra FALLBACKS <<< "$FALLBACK_MODELS"
   for fallback in "${FALLBACKS[@]}"; do
     echo "Rate limit reached for $MODEL. Retrying with $fallback..." >&2
     MODEL="$fallback"
     RESPONSE=$(call_model "$MODEL")
-    ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""' 2>/dev/null)
+    ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""' 2>/dev/null) || ERROR_CODE=""
     [[ "$ERROR_CODE" != "rate_limit_exceeded" ]] && break
   done
 fi
 
-if [[ "$ERROR_CODE" == "rate_limit_exceeded" ]]; then
+if [[ "$ERROR_CODE" == "rate_limit_exceeded" || "$RESPONSE" == *"Too many requests"* ]]; then
   echo "Error: rate limit reached for all models in the fallback chain." >&2
   echo "Try again later or set PR_SUMMARISE_FALLBACK_MODELS to a different chain." >&2
   exit 1
@@ -213,7 +213,7 @@ SUMMARY=$(echo "$RESPONSE" | jq -r '.choices[0].message.content' 2>/dev/null) ||
 
 if [[ -z "$SUMMARY" || "$SUMMARY" == "null" ]]; then
   if [[ "$ERROR_CODE" == "tokens_limit_reached" ]]; then
-    ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error.message // ""' 2>/dev/null)
+    ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error.message // ""' 2>/dev/null) || ERROR_MSG=""
     echo "Error: $ERROR_MSG" >&2
     echo "Hint: reduce the diff size with --max-diff-chars (current: $MAX_DIFF_CHARS)" >&2
     echo "      or choose a model with a larger context window — run 'gh models list'" >&2
