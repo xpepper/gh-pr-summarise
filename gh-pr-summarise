@@ -169,38 +169,57 @@ fi
 call_model() {
   local model="$1"
   local tokens_param="${2:-max_tokens}"
+  local include_temperature="${3:-true}"
+  local body
+  body=$(jq -n \
+    --arg model  "$model" \
+    --arg prompt "$PROMPT_TEXT" \
+    --arg diff   "$DIFF" \
+    --arg tparam "$tokens_param" \
+    --argjson include_temp "$include_temperature" \
+    '{
+      model: $model,
+      ($tparam): 500,
+      messages: [{
+        role: "user",
+        content: "\($prompt)\n\n\($diff)"
+      }]
+    } + (if $include_temp then {temperature: 0.2} else {} end)')
   curl -sS -L "$ENDPOINT" \
     -H "Authorization: Bearer $(gh auth token)" \
     -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
     -H "Content-Type: application/json" \
-    -d "$(jq -n \
-      --arg model  "$model" \
-      --arg prompt "$PROMPT_TEXT" \
-      --arg diff   "$DIFF" \
-      --arg tparam "$tokens_param" \
-      '{
-        model: $model,
-        temperature: 0.2,
-        ($tparam): 500,
-        messages: [{
-          role: "user",
-          content: "\($prompt)\n\n\($diff)"
-        }]
-      }')"
+    -d "$body"
 }
 
-# Calls call_model and retries with max_completion_tokens if the model rejects max_tokens.
+# Calls call_model and retries transparently when the model rejects:
+#   - max_tokens (newer OpenAI models require max_completion_tokens instead)
+#   - temperature (some models only support the default and reject explicit values)
 invoke_model() {
   local model="$1"
+  local tokens_param="max_tokens"
+  local include_temperature="true"
   local response error_code error_param
-  response=$(call_model "$model")
+
+  response=$(call_model "$model" "$tokens_param" "$include_temperature")
   error_code=$(echo "$response" | jq -r '.error.code // ""' 2>/dev/null) || error_code=""
   error_param=$(echo "$response" | jq -r '.error.param // ""' 2>/dev/null) || error_param=""
+
   if [[ "$error_code" == "unsupported_parameter" && "$error_param" == "max_tokens" ]]; then
     echo "Model $model requires max_completion_tokens, retrying..." >&2
-    response=$(call_model "$model" "max_completion_tokens")
+    tokens_param="max_completion_tokens"
+    response=$(call_model "$model" "$tokens_param" "$include_temperature")
+    error_code=$(echo "$response" | jq -r '.error.code // ""' 2>/dev/null) || error_code=""
+    error_param=$(echo "$response" | jq -r '.error.param // ""' 2>/dev/null) || error_param=""
   fi
+
+  if [[ "$error_code" == "unsupported_value" && "$error_param" == "temperature" ]]; then
+    echo "Model $model does not support custom temperature, retrying..." >&2
+    include_temperature="false"
+    response=$(call_model "$model" "$tokens_param" "$include_temperature")
+  fi
+
   echo "$response"
 }
 

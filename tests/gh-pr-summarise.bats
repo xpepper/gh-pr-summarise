@@ -327,6 +327,27 @@ EOF
   [[ "$output" == *"PR_SUMMARISE_FALLBACK_MODELS"* ]]
 }
 
+@test "retries without temperature when model rejects it" {
+  setup_mock_gh ""
+
+  local sentinel="$_MOCK_DIR/curl_called"
+
+  cat > "$_MOCK_DIR/curl" <<EOF
+#!/usr/bin/env bash
+if [[ ! -e "$sentinel" ]]; then
+  touch "$sentinel"
+  echo '{"error":{"code":"unsupported_value","message":"temperature not supported","param":"temperature","type":"invalid_request_error"}}'
+else
+  echo '{"choices":[{"message":{"content":"summary without temperature"}}]}'
+fi
+EOF
+  chmod +x "$_MOCK_DIR/curl"
+
+  run bash -c "echo n | bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"summary without temperature"* ]]
+}
+
 @test "retries with max_completion_tokens when model rejects max_tokens" {
   setup_mock_gh ""
 

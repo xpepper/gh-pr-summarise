@@ -48,8 +48,8 @@ MARKER="<!-- pr-summarise -->"
   [ "$marker_count" -eq 1 ]
 }
 
-@test "works with openai/gpt-5-nano which requires max_completion_tokens" {
-  run "$SCRIPT" --model openai/gpt-5-nano --force --yes "$TEST_PR_URL"
+@test "works with openai/gpt-5 which requires max_completion_tokens and no temperature" {
+  run "$SCRIPT" --model openai/gpt-5 --force --yes "$TEST_PR_URL"
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"PR #1 description updated"* ]]

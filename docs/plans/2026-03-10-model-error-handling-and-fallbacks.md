@@ -168,10 +168,38 @@ and refining the fallback chain order.
 
 ## Testing Checklist
 
-- [x] `make test` passes (26 unit tests, shellcheck clean)
-- [x] `make integration-test` passes (4 tests: skip human-written, generate+apply,
-      idempotency, tracker URL preservation)
+- [x] `make test` passes (29 unit tests, shellcheck clean)
+- [x] `make integration-test` passes (5 tests: skip human-written, generate+apply,
+      idempotency, gpt-5 compatibility, tracker URL preservation)
 - [x] Task 4 manual matrix completed — results in `docs/model-compatibility.md`
+- [x] Task 5 model compat fixes verified against live API (`openai/gpt-5`)
+
+---
+
+---
+
+## ✅ Task 5: Auto-retry for newer OpenAI model API incompatibilities — DONE
+
+**Commits:** `d5ca376`, plus temperature fix
+
+**What was implemented:**
+
+- `call_model` extended with optional `tokens_param` (default `max_tokens`) and
+  `include_temperature` (default `true`) arguments, using jq dynamic key syntax.
+- `invoke_model` wrapper added that calls `call_model` and retries transparently:
+  1. On `unsupported_parameter` / `param: max_tokens` → retries with `max_completion_tokens`
+  2. On `unsupported_value` / `param: temperature` → retries without the `temperature` field
+- All `call_model` call sites replaced with `invoke_model`.
+- 3 new unit tests (retry on `max_tokens` rejection, retry on `temperature` rejection,
+  request body contains `max_completion_tokens` on retry).
+- Integration test added for `openai/gpt-5` (both fixes verified against live API).
+
+**Discovered during work:**
+
+- `openai/gpt-5-nano` hits both the `max_tokens` and `temperature` issues (both handled),
+  but is also a reasoning model that consumes all 500 tokens internally — unreliable in
+  integration tests. Integration test for `gpt-5-nano` removed; issue tracked in
+  `docs/model-compatibility.md` Future Work.
 
 ---
 
@@ -180,3 +208,4 @@ and refining the fallback chain order.
 - `--json` output flag (low priority, no user request yet)
 - Progress spinner/dots during API call (nice to have, adds complexity)
 - Per-model `--max-diff-chars` auto-tuning based on known token limits
+- Empty content / reasoning token budget for `gpt-5-nano`, `grok-3-mini` and similar

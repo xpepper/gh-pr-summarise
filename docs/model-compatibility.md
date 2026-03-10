@@ -38,30 +38,31 @@ Tested on: 2026-03-10
 | `openai/gpt-4.1-nano` | ✅ | |
 | `openai/gpt-4o` | ✅ | |
 | `openai/gpt-4o-mini` | ✅ | |
-| `openai/gpt-5` | ❌ unsupported param | Rejects `max_tokens`; requires `max_completion_tokens` instead |
+| `openai/gpt-5` | ✅ (auto-retry) | Requires `max_completion_tokens` + no `temperature`; both handled transparently |
 | `openai/gpt-5-chat` | ✅ | |
-| `openai/gpt-5-mini` | ❌ unsupported param | Same as gpt-5 |
-| `openai/gpt-5-nano` | ❌ unsupported param | Same as gpt-5 |
-| `openai/o1` | ❌ unsupported param | Same as gpt-5 |
+| `openai/gpt-5-mini` | ✅ (auto-retry) | Same as gpt-5 |
+| `openai/gpt-5-nano` | ⚠️ flaky | Requires `max_completion_tokens` + no `temperature` (both handled), but reasoning tokens consume the 500-token cap; `finish_reason: length`, empty content |
+| `openai/o1` | ✅ (auto-retry) | Same as gpt-5 |
 | `openai/o1-mini` | ❌ API version | Requires API version `2024-12-01-preview` or later; script uses `2022-11-28` |
 | `openai/o1-preview` | ❌ API version | Same as o1-mini |
-| `openai/o3` | ❌ unsupported param | Same as gpt-5 |
-| `openai/o3-mini` | ❌ unsupported param | Same as gpt-5 |
-| `openai/o4-mini` | ❌ unsupported param | Same as gpt-5 |
+| `openai/o3` | ✅ (auto-retry) | Same as gpt-5 |
+| `openai/o3-mini` | ✅ (auto-retry) | Same as gpt-5 |
+| `openai/o4-mini` | ✅ (auto-retry) | Same as gpt-5 |
 | `xai/grok-3` | ✅ | |
 | `xai/grok-3-mini` | ❌ empty response | Returns empty `content` — reasoning tokens fill the 500-token output cap; `finish_reason: length` |
 
-**Summary:** 28/41 models work out of the box. 13 fail due to three distinct API incompatibilities.
+**Summary:** 35/41 models work (28 out of the box + 7 via auto-retry). 5 fail due to unresolved incompatibilities; 1 is flaky (reasoning token budget).
 
 ---
 
 ## Failure Categories
 
-### 1. `max_tokens` → `max_completion_tokens` (7 models)
+### 1. `max_tokens` → `max_completion_tokens` + no custom `temperature` (7 models)
 
 Affects: `openai/gpt-5`, `openai/gpt-5-mini`, `openai/gpt-5-nano`, `openai/o1`, `openai/o3`, `openai/o3-mini`, `openai/o4-mini`
 
-Error:
+Two errors hit in sequence:
+
 ```json
 {
   "error": {
@@ -73,10 +74,20 @@ Error:
 }
 ```
 
-**Fix:** The script sends `max_tokens: 500` in the request body. These newer OpenAI models
-require the renamed field `max_completion_tokens` instead. A fix would detect the
-`unsupported_parameter` error and retry with `max_completion_tokens`, or send both fields
-and let the API ignore the unsupported one.
+```json
+{
+  "error": {
+    "message": "Unsupported value: 'temperature' does not support 0.2 with this model. Only the default (1) value is supported.",
+    "type": "invalid_request_error",
+    "param": "temperature",
+    "code": "unsupported_value"
+  }
+}
+```
+
+**Fixed (2026-03-11):** `invoke_model` now detects and retries both errors transparently:
+first retries with `max_completion_tokens`, then retries without `temperature` if that
+is also rejected. Verified against `openai/gpt-5` in integration tests.
 
 ### 2. API version too old (2 models)
 
@@ -90,17 +101,19 @@ Error:
 **Fix:** The script hardcodes `X-GitHub-Api-Version: 2022-11-28`. These models require
 `2024-12-01-preview` or later. Would need per-model version routing or a newer default.
 
-### 3. Empty `content` field — reasoning models with short output cap (1 model)
+### 3. Empty `content` field — reasoning models with short output cap (2 models)
 
-Affects: `xai/grok-3-mini`
+Affects: `xai/grok-3-mini`, `openai/gpt-5-nano`
 
 The model returns a valid JSON completion response, but `choices[0].message.content` is an
-empty string (`""`). The reasoning appears in `choices[0].message.reasoning_content` instead.
-The `finish_reason` is `"length"` and `completion_tokens: 0` — all 500 tokens were consumed
-by internal reasoning before any output was written.
+empty string (`""`). All 500 tokens are consumed by internal reasoning before any output is
+written (`finish_reason: length`, `reasoning_tokens: 500`).
 
-**Fix:** Either increase `max_tokens` for reasoning-heavy models, or extract from
-`reasoning_content` as a fallback when `content` is empty.
+`gpt-5-nano` also hits the `max_tokens`/`temperature` issues above (both auto-retried), but
+the reasoning token budget problem remains unresolved, making it unreliable.
+
+**Fix (open):** Increase the token budget for reasoning models, or implement reactive
+retry-with-more-tokens when `finish_reason: length` + empty content is detected.
 
 ### 4. Timeout (2 models)
 
@@ -133,6 +146,7 @@ export PR_SUMMARISE_FALLBACK_MODELS="openai/gpt-4o,openai/gpt-4o-mini,mistral-ai
 
 ## Future Work
 
-- [ ] Support `max_completion_tokens` for gpt-5 / o-series models (auto-detect `unsupported_parameter`)
+- [x] Support `max_completion_tokens` for gpt-5 / o-series models (auto-detect `unsupported_parameter`) — done 2026-03-11
+- [x] Support no-`temperature` for gpt-5 / o-series models (auto-detect `unsupported_value`) — done 2026-03-11
 - [ ] Support newer API version routing for o1-mini / o1-preview
-- [ ] Handle `reasoning_content` fallback for grok-3-mini and similar reasoning models
+- [ ] Handle empty `content` with `finish_reason: length` for reasoning models (grok-3-mini, gpt-5-nano) — increase token budget or retry with more tokens
