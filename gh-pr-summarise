@@ -244,6 +244,17 @@ if [[ "$ERROR_CODE" == "rate_limit_exceeded" || "$RESPONSE" == *"Too many reques
   exit 1
 fi
 
+# Auto-tune: if the diff is too large, halve it and retry (up to 3 times).
+DIFF_RETRIES=0
+while [[ "$ERROR_CODE" == "tokens_limit_reached" && "$DIFF_RETRIES" -lt 3 ]]; do
+  DIFF_RETRIES=$(( DIFF_RETRIES + 1 ))
+  MAX_DIFF_CHARS=$(( MAX_DIFF_CHARS / 2 ))
+  DIFF="${FULL_DIFF:0:$MAX_DIFF_CHARS}"
+  echo "Diff too large for $MODEL. Retrying with --max-diff-chars $MAX_DIFF_CHARS..." >&2
+  RESPONSE=$(invoke_model "$MODEL")
+  ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""' 2>/dev/null) || ERROR_CODE=""
+done
+
 SUMMARY=$(echo "$RESPONSE" | jq -r '.choices[0].message.content' 2>/dev/null) || SUMMARY=""
 
 if [[ -z "$SUMMARY" || "$SUMMARY" == "null" ]]; then

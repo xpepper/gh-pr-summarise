@@ -148,5 +148,6 @@ export PR_SUMMARISE_FALLBACK_MODELS="openai/gpt-4o,openai/gpt-4o-mini,mistral-ai
 
 - [x] Support `max_completion_tokens` for gpt-5 / o-series models (auto-detect `unsupported_parameter`) — done 2026-03-11
 - [x] Support no-`temperature` for gpt-5 / o-series models (auto-detect `unsupported_value`) — done 2026-03-11
+- [x] Auto-reduce diff size on `tokens_limit_reached` (halve up to 3 times) — done 2026-03-11
 - [ ] Support newer API version routing for o1-mini / o1-preview
 - [ ] Handle empty `content` with `finish_reason: length` for reasoning models (grok-3-mini, gpt-5-nano) — increase token budget or retry with more tokens

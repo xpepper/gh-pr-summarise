@@ -166,16 +166,6 @@ and refining the fallback chain order.
 
 ---
 
-## Testing Checklist
-
-- [x] `make test` passes (29 unit tests, shellcheck clean)
-- [x] `make integration-test` passes (5 tests: skip human-written, generate+apply,
-      idempotency, gpt-5 compatibility, tracker URL preservation)
-- [x] Task 4 manual matrix completed — results in `docs/model-compatibility.md`
-- [x] Task 5 model compat fixes verified against live API (`openai/gpt-5`)
-
----
-
 ---
 
 ## ✅ Task 5: Auto-retry for newer OpenAI model API incompatibilities — DONE
@@ -203,9 +193,35 @@ and refining the fallback chain order.
 
 ---
 
+---
+
+## ✅ Task 6: Auto-tune diff size on `tokens_limit_reached` (Option B) — DONE
+
+**What was implemented:**
+
+- After the rate-limit fallback block, a `while` loop retries up to 3 times when
+  `ERROR_CODE == tokens_limit_reached`.
+- Each retry halves `MAX_DIFF_CHARS` and rebuilds `DIFF` from the already-fetched
+  `FULL_DIFF` (no extra `gh pr diff` call needed).
+- Progression: 28k → 14k → 7k → 3.5k — covers all realistic model context limits.
+- After 3 failed retries, falls through to the existing actionable error message
+  (hints for `--max-diff-chars` and `gh models list`).
+- 2 new unit tests: success-after-one-retry, and exhausted-retries error path.
+
+---
+
+## Testing Checklist
+
+- [x] `make test` passes (31 unit tests, shellcheck clean)
+- [x] `make integration-test` passes (5 tests)
+- [x] Task 4 manual matrix completed — results in `docs/model-compatibility.md`
+- [x] Task 5 model compat fixes verified against live API (`openai/gpt-5`)
+- [x] Task 6 diff auto-tune verified via unit tests
+
+---
+
 ## Out of Scope (deferred)
 
 - `--json` output flag (low priority, no user request yet)
 - Progress spinner/dots during API call (nice to have, adds complexity)
-- Per-model `--max-diff-chars` auto-tuning based on known token limits
 - Empty content / reasoning token budget for `gpt-5-nano`, `grok-3-mini` and similar

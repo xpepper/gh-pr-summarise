@@ -327,6 +327,42 @@ EOF
   [[ "$output" == *"PR_SUMMARISE_FALLBACK_MODELS"* ]]
 }
 
+@test "automatically reduces diff size and retries when tokens_limit_reached" {
+  setup_mock_gh ""
+
+  local sentinel="$_MOCK_DIR/curl_called"
+
+  cat > "$_MOCK_DIR/curl" <<EOF
+#!/usr/bin/env bash
+if [[ ! -e "$sentinel" ]]; then
+  touch "$sentinel"
+  echo '{"error":{"code":"tokens_limit_reached","message":"Request too large."}}'
+else
+  echo '{"choices":[{"message":{"content":"summary after diff reduction"}}]}'
+fi
+EOF
+  chmod +x "$_MOCK_DIR/curl"
+
+  run bash -c "echo n | bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"summary after diff reduction"* ]]
+}
+
+@test "exits with actionable error after exhausting all diff reduction retries" {
+  setup_mock_gh ""
+
+  cat > "$_MOCK_DIR/curl" <<'EOF'
+#!/usr/bin/env bash
+echo '{"error":{"code":"tokens_limit_reached","message":"Request too large for this model."}}'
+EOF
+  chmod +x "$_MOCK_DIR/curl"
+
+  run bash "$SCRIPT" 123
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--max-diff-chars"* ]]
+  [[ "$output" == *"gh models list"* ]]
+}
+
 @test "retries without temperature when model rejects it" {
   setup_mock_gh ""
 
