@@ -60,9 +60,13 @@ A feature or fix is done when:
   the next model in a comma-separated chain (`openai/gpt-4o,openai/gpt-4o-mini` by default).
   Controlled via `PR_SUMMARISE_FALLBACK_MODELS`; set to `""` to disable. If all models in
   the chain are exhausted, exits with a clear error referencing the env var.
-- **Actionable token-limit errors** — `tokens_limit_reached` responses surface the model's
-  actual error message plus hints to reduce the diff (`--max-diff-chars`) or discover
-  larger-context models (`gh models list`), instead of dumping raw JSON.
+- **Auto-tuning diff size** — on `tokens_limit_reached`, the script halves `MAX_DIFF_CHARS`
+  and rebuilds `DIFF` from the already-fetched `FULL_DIFF`, retrying up to 3 times
+  (28k → 14k → 7k → 3.5k). If all retries fail, exits with an actionable error hinting at
+  `--max-diff-chars` and `gh models list`.
+- **Transparent model-compat retries** — `invoke_model` wraps `call_model` and retries when
+  a model rejects `max_tokens` (retries with `max_completion_tokens`) or rejects an explicit
+  `temperature` (retries without it). Covers `gpt-5`, `o1`, `o3`, `o4-mini` and variants.
 
 ## Behaviour Matrix
 

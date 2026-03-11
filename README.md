@@ -71,9 +71,16 @@ adjusting `PR_SUMMARISE_FALLBACK_MODELS`.
 
 ### Token limits
 
-If the diff is too large for the selected model, the tool shows an actionable error message
-with the model's actual limit and suggests reducing the diff with `--max-diff-chars` or
-running `gh models list` to find a model with a larger context window.
+If the diff is too large for the selected model, the tool automatically retries up to three
+times, halving the diff on each attempt (28 000 → 14 000 → 7 000 → 3 500 characters). If
+the diff is still too large after all retries, it exits with an actionable error message
+suggesting `--max-diff-chars` or `gh models list` to find a larger-context model.
+
+### Newer OpenAI model compatibility
+
+Newer OpenAI models (`gpt-5`, `o1`, `o3`, `o4-mini`, and variants) require
+`max_completion_tokens` instead of `max_tokens` and reject an explicit `temperature` value.
+The tool detects these errors and retries transparently — no extra flags needed.
 
 ## Configuration
 
