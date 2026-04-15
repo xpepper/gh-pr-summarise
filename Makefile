@@ -3,10 +3,10 @@
 test: shellcheck bats
 
 shellcheck:
-	shellcheck gh-pr-summarise
+	shellcheck gh-pr-summarise scripts/model-matrix.sh
 
 bats:
-	bats tests/gh-pr-summarise.bats
+	bats tests/gh-pr-summarise.bats tests/model-matrix.bats
 
 integration-test:
 	bats tests/integration.bats

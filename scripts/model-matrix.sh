@@ -33,49 +33,48 @@ done
 classify() {
   local output="$1"
 
-  if echo "$output" | grep -qE "description updated|Generated description|Aborted"; then
+  if [[ "$output" =~ (description\ updated|Generated\ description|Aborted) ]]; then
     echo "✅"
     return
   fi
 
-  if echo "$output" | grep -qE "Retrying with"; then
-    local fallback
-    fallback=$(echo "$output" | grep -oE "Retrying with [^..]+" | head -1 | sed 's/Retrying with //')
+  if [[ "$output" =~ Retrying\ with\ ([^.]+) ]]; then
+    local fallback="${BASH_REMATCH[1]}"
     echo "✅ (via fallback: $fallback)"
     return
   fi
 
-  if echo "$output" | grep -qE "tokens_limit_reached|too large|Max size|max_tokens|max_completion_tokens"; then
+  if [[ "$output" =~ (tokens_limit_reached|too\ large|Max\ size|max_tokens|max_completion_tokens) ]]; then
     echo "❌ token/param error"
     return
   fi
 
-  if echo "$output" | grep -qE "rate limit reached for all|Too many requests|rate_limit_exceeded"; then
+  if [[ "$output" =~ (rate\ limit\ reached\ for\ all|Too\ many\ requests|rate_limit_exceeded) ]]; then
     echo "ℹ️ rate limited"
     return
   fi
 
-  if echo "$output" | grep -qE "context deadline|timed out|timeout"; then
+  if [[ "$output" =~ (context\ deadline|timed\ out|timeout) ]]; then
     echo "❌ timeout"
     return
   fi
 
-  if echo "$output" | grep -qE "unknown_model|Unknown model"; then
+  if [[ "$output" =~ (unknown_model|Unknown\ model) ]]; then
     echo "❌ unknown model"
     return
   fi
 
-  if echo "$output" | grep -qE "api version|api versions"; then
+  if [[ "$output" =~ (api\ version|api\ versions) ]]; then
     echo "❌ API version"
     return
   fi
 
-  if echo "$output" | grep -qE "BadRequest"; then
+  if [[ "$output" =~ BadRequest ]]; then
     echo "❌ bad request"
     return
   fi
 
-  if echo "$output" | grep -qE "no summary returned"; then
+  if [[ "$output" =~ no\ summary\ returned ]]; then
     echo "❌ no summary"
     return
   fi
@@ -87,35 +86,46 @@ notes() {
   local output="$1"
 
   # Surface the most useful single line from the output
-  if echo "$output" | grep -qE "tokens_limit_reached|too large|Max size"; then
-    echo "$output" | grep -oE "Max size: [0-9]+ tokens" | head -1
+  if [[ "$output" =~ Max\ size:\ ([0-9]+)\ tokens ]]; then
+    echo "Max size: ${BASH_REMATCH[1]} tokens"
     return
   fi
 
-  if echo "$output" | grep -qE "max_tokens|max_completion_tokens"; then
+  # Diff-size failures take precedence over retry hints for models that also
+  # require max_completion_tokens. Preserve the old blank-note behavior when no
+  # explicit max size is available.
+  if [[ "$output" =~ (tokens_limit_reached|too\ large) ]]; then
+    return
+  fi
+
+  if [[ "$output" =~ (max_tokens|max_completion_tokens) ]]; then
     echo "use max_completion_tokens instead"
     return
   fi
 
-  if echo "$output" | grep -qE "api version|api versions"; then
-    echo "$output" | grep -oE "api versions? [^\"]+" | head -1 | cut -c1-60
+  if [[ "$output" =~ (api\ versions?\ [^\"]+) ]]; then
+    local msg="${BASH_REMATCH[1]}"
+    echo "${msg:0:60}"
     return
   fi
 
-  if echo "$output" | grep -qE "unknown_model|Unknown model"; then
+  if [[ "$output" =~ (unknown_model|Unknown\ model) ]]; then
     echo "not available via inference endpoint"
     return
   fi
 
-  if echo "$output" | grep -qE "context deadline|timed out"; then
+  if [[ "$output" =~ (context\ deadline|timed\ out) ]]; then
     echo "model too slow on free tier"
     return
   fi
 
-  if echo "$output" | grep -qE "no summary returned"; then
+  if [[ "$output" =~ no\ summary\ returned ]]; then
     # Try to extract the error code from the raw JSON
-    echo "$output" | grep -oE '"code":"[^"]+"' | head -1 | tr -d '"code:' | head -c 60
-    return
+    if [[ "$output" =~ \"code\":\"([^\"]+)\" ]]; then
+      local code="${BASH_REMATCH[1]}"
+      echo "${code:0:60}"
+      return
+    fi
   fi
 }
 
