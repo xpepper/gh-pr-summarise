@@ -91,6 +91,13 @@ notes() {
     return
   fi
 
+  # Diff-size failures take precedence over retry hints for models that also
+  # require max_completion_tokens. Preserve the old blank-note behavior when no
+  # explicit max size is available.
+  if [[ "$output" =~ (tokens_limit_reached|too\ large) ]]; then
+    return
+  fi
+
   if [[ "$output" =~ (max_tokens|max_completion_tokens) ]]; then
     echo "use max_completion_tokens instead"
     return
