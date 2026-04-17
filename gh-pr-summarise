@@ -112,6 +112,9 @@ elif [[ "$PR" =~ ^https?://github\.com/([^/]+/[^/]+)/pull/([0-9]+) ]]; then
   PR="${BASH_REMATCH[2]}"
 fi
 
+# ── Fetch auth token ───────────────────────────────────────────────────────────
+GH_TOKEN=$(gh auth token)
+
 # ── Fetch existing PR description ─────────────────────────────────────────────
 EXISTING_BODY=$(gh pr view "${REPO_ARGS[@]}" "$PR" --json body -q '.body // ""')
 MARKER="<!-- pr-summarise -->"
@@ -186,7 +189,7 @@ call_model() {
       }]
     } + (if $include_temp then {temperature: 0.2} else {} end)')
   curl -sS -L "$ENDPOINT" \
-    -H "Authorization: Bearer $(gh auth token)" \
+    -H "Authorization: Bearer $GH_TOKEN" \
     -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
     -H "Content-Type: application/json" \
