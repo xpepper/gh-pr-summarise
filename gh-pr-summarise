@@ -166,6 +166,9 @@ Output only raw Markdown text. Do not wrap the output in a code fence or backtic
 fi
 
 # ── Call GitHub Models (with fallback on rate limit) ─────────────────────────
+# ⚡ Bolt: Cache gh auth token to prevent repeatedly spawning subprocesses during retries
+GH_TOKEN=$(gh auth token)
+
 call_model() {
   local model="$1"
   local tokens_param="${2:-max_tokens}"
@@ -186,7 +189,7 @@ call_model() {
       }]
     } + (if $include_temp then {temperature: 0.2} else {} end)')
   curl -sS -L "$ENDPOINT" \
-    -H "Authorization: Bearer $(gh auth token)" \
+    -H "Authorization: Bearer $GH_TOKEN" \
     -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
     -H "Content-Type: application/json" \
