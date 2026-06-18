@@ -30,103 +30,61 @@ done
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-classify() {
+# Internal helper to analyze gh-pr-summarise output and set global variables.
+_analyze_output() {
   local output="$1"
+  RESULT_STATUS="❌ error"
+  RESULT_NOTE=""
 
+  # Priority 1: Success markers
   if [[ "$output" =~ (description\ updated|Generated\ description|Aborted) ]]; then
-    echo "✅"
-    return
+    RESULT_STATUS="✅"
+  # Priority 2: Failures with specific notes (highest priority for errors)
+  elif [[ "$output" =~ Max\ size:\ ([0-9]+)\ tokens ]]; then
+    RESULT_STATUS="❌ token/param error"
+    RESULT_NOTE="Max size: ${BASH_REMATCH[1]} tokens"
+  elif [[ "$output" =~ (tokens_limit_reached|too\ large) ]]; then
+    RESULT_STATUS="❌ token/param error"
+  elif [[ "$output" =~ (max_tokens|max_completion_tokens) ]]; then
+    RESULT_STATUS="❌ token/param error"
+    RESULT_NOTE="use max_completion_tokens instead"
+  elif [[ "$output" =~ (api\ versions?\ [^\"]+) ]]; then
+    RESULT_STATUS="❌ API version"
+    RESULT_NOTE="${BASH_REMATCH[1]:0:60}"
+  elif [[ "$output" =~ (unknown_model|Unknown\ model) ]]; then
+    RESULT_STATUS="❌ unknown model"
+    RESULT_NOTE="not available via inference endpoint"
+  elif [[ "$output" =~ (context\ deadline|timed\ out) ]]; then
+    RESULT_STATUS="❌ timeout"
+    RESULT_NOTE="model too slow on free tier"
+  # Priority 3: Retry hints (considered success-ish)
+  elif [[ "$output" =~ Retrying\ with\ ([^.]+) ]]; then
+    RESULT_STATUS="✅ (via fallback: ${BASH_REMATCH[1]})"
+  # Priority 4: Generic errors
+  elif [[ "$output" =~ (rate\ limit\ reached\ for\ all|Too\ many\ requests|rate_limit_exceeded) ]]; then
+    RESULT_STATUS="ℹ️ rate limited"
+  elif [[ "$output" =~ (context\ deadline|timed\ out|timeout) ]]; then
+    RESULT_STATUS="❌ timeout"
+  elif [[ "$output" =~ (api\ version|api\ versions) ]]; then
+    RESULT_STATUS="❌ API version"
+  elif [[ "$output" =~ BadRequest ]]; then
+    RESULT_STATUS="❌ bad request"
+  elif [[ "$output" =~ no\ summary\ returned ]]; then
+    RESULT_STATUS="❌ no summary"
+    if [[ "$output" =~ \"code\":\"([^\"]+)\" ]]; then
+      RESULT_NOTE="${BASH_REMATCH[1]:0:60}"
+    fi
   fi
+}
 
-  if [[ "$output" =~ Retrying\ with\ ([^.]+) ]]; then
-    local fallback="${BASH_REMATCH[1]}"
-    echo "✅ (via fallback: $fallback)"
-    return
-  fi
-
-  if [[ "$output" =~ (tokens_limit_reached|too\ large|Max\ size|max_tokens|max_completion_tokens) ]]; then
-    echo "❌ token/param error"
-    return
-  fi
-
-  if [[ "$output" =~ (rate\ limit\ reached\ for\ all|Too\ many\ requests|rate_limit_exceeded) ]]; then
-    echo "ℹ️ rate limited"
-    return
-  fi
-
-  if [[ "$output" =~ (context\ deadline|timed\ out|timeout) ]]; then
-    echo "❌ timeout"
-    return
-  fi
-
-  if [[ "$output" =~ (unknown_model|Unknown\ model) ]]; then
-    echo "❌ unknown model"
-    return
-  fi
-
-  if [[ "$output" =~ (api\ version|api\ versions) ]]; then
-    echo "❌ API version"
-    return
-  fi
-
-  if [[ "$output" =~ BadRequest ]]; then
-    echo "❌ bad request"
-    return
-  fi
-
-  if [[ "$output" =~ no\ summary\ returned ]]; then
-    echo "❌ no summary"
-    return
-  fi
-
-  echo "❌ error"
+classify() {
+  _analyze_output "$1"
+  echo "$RESULT_STATUS"
 }
 
 notes() {
-  local output="$1"
-
-  # Surface the most useful single line from the output
-  if [[ "$output" =~ Max\ size:\ ([0-9]+)\ tokens ]]; then
-    echo "Max size: ${BASH_REMATCH[1]} tokens"
-    return
-  fi
-
-  # Diff-size failures take precedence over retry hints for models that also
-  # require max_completion_tokens. Preserve the old blank-note behavior when no
-  # explicit max size is available.
-  if [[ "$output" =~ (tokens_limit_reached|too\ large) ]]; then
-    return
-  fi
-
-  if [[ "$output" =~ (max_tokens|max_completion_tokens) ]]; then
-    echo "use max_completion_tokens instead"
-    return
-  fi
-
-  if [[ "$output" =~ (api\ versions?\ [^\"]+) ]]; then
-    local msg="${BASH_REMATCH[1]}"
-    echo "${msg:0:60}"
-    return
-  fi
-
-  if [[ "$output" =~ (unknown_model|Unknown\ model) ]]; then
-    echo "not available via inference endpoint"
-    return
-  fi
-
-  if [[ "$output" =~ (context\ deadline|timed\ out) ]]; then
-    echo "model too slow on free tier"
-    return
-  fi
-
-  if [[ "$output" =~ no\ summary\ returned ]]; then
-    # Try to extract the error code from the raw JSON
-    if [[ "$output" =~ \"code\":\"([^\"]+)\" ]]; then
-      local code="${BASH_REMATCH[1]}"
-      echo "${code:0:60}"
-      return
-    fi
-  fi
+  _analyze_output "$1"
+  echo "$RESULT_NOTE"
 }
 
 # ── Main ───────────────────────────────────────────────────────────────────────
