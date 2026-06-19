@@ -13,7 +13,7 @@ run_model_matrix_function() {
 
     # Source only the helper functions, not the script main body.
     # shellcheck disable=SC1090
-    source <(sed -n "/^classify()/,/^# ── Main/{ /^# ── Main/!p; }" "$script")
+    source <(sed -n "/^_analyze_output()/,/^# ── Main/{ /^# ── Main/!p; }" "$script")
     "$function_name" "$input"
   ' bash "$SCRIPT" "$function_name" "$input"
 }
