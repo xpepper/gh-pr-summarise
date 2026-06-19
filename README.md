@@ -33,6 +33,12 @@ gh pr-summarise --yes
 
 # Generate even if a human-written description already exists
 gh pr-summarise --force
+
+# Also generate a PR title (adds an [INTOP-123] prefix if the branch carries a card id)
+gh pr-summarise --title
+
+# Generate a Conventional Commit title, e.g. "[INTOP-123] feat: add export endpoint"
+gh pr-summarise --conventional
 ```
 
 ## Options
@@ -43,6 +49,8 @@ gh pr-summarise --force
 | `--max-diff-chars` | `-n` | `28000` | Diff truncation limit (~7k tokens, under GitHub Models' 8k cap). |
 | `--yes` | `-y` | — | Apply without asking for confirmation. |
 | `--force` | `-f` | — | Generate even if a human-written description already exists. |
+| `--title` | `-t` | — | Also generate a PR title from the diff (see [PR title](#pr-title)). |
+| `--conventional` | `-c` | — | Format the generated title as a [Conventional Commit](https://www.conventionalcommits.org/). Implies `--title`. |
 | `--prompt-file` | `-p` | — | Path to a file containing a custom system prompt. Overrides `PR_SUMMARISE_PROMPT_FILE`. |
 | `--help` | `-h` | — | Show help. |
 | `--version` | `-v` | — | Print version and exit. |
@@ -57,6 +65,23 @@ gh pr-summarise --force
 | Human-written content | Skip — prints the existing description and exits |
 
 Use `--force` to override the skip and generate anyway.
+
+### PR title
+
+By default the tool only touches the PR **description**. Pass `--title` (or `-t`) to
+also generate a one-line PR title from the diff:
+
+- If the head branch carries a card id (e.g. `intop-123-add-export-endpoint`), the
+  title is prefixed with the uppercased id in brackets — `[INTOP-123] …`. The id is
+  matched as the first `key-number` token in the branch name (so `feature/intop-123-…`
+  works too). Branches without such a token get no prefix.
+- Add `--conventional` (or `-c`) to format the title as a
+  [Conventional Commit](https://www.conventionalcommits.org/), e.g.
+  `[INTOP-123] feat: add export endpoint`. `--conventional` implies `--title`.
+
+The generated title is shown alongside the description for review and, on confirmation,
+applied with `gh pr edit --title`. Title generation makes one extra model request; if it
+fails (e.g. rate-limited), the tool warns and still applies the description.
 
 The tool detects its own output via an HTML comment marker (`<!-- pr-summarise -->`) embedded at the end of every generated description. If you edit a generated description and want to protect your changes from being overwritten on the next run, remove that marker.
 
@@ -98,6 +123,12 @@ export PR_SUMMARISE_FALLBACK_MODELS=""
 
 # Use a custom fallback chain
 export PR_SUMMARISE_FALLBACK_MODELS="openai/gpt-4o,phi-4"
+
+# Generate a title by default (equivalent to always passing --title)
+export PR_SUMMARISE_TITLE=1
+
+# Make generated titles Conventional Commits by default (implies --title)
+export PR_SUMMARISE_CONVENTIONAL=1
 ```
 
 ## Requirements
