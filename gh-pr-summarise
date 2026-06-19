@@ -24,6 +24,10 @@ FALLBACK_MODELS="${PR_SUMMARISE_FALLBACK_MODELS:-openai/gpt-4o,openai/gpt-4o-min
 
 YES=false
 FORCE=false
+GENERATE_TITLE=false
+CONVENTIONAL=false
+[[ -n "${PR_SUMMARISE_TITLE:-}" ]] && GENERATE_TITLE=true
+[[ -n "${PR_SUMMARISE_CONVENTIONAL:-}" ]] && CONVENTIONAL=true
 PROMPT_FILE="${PR_SUMMARISE_PROMPT_FILE:-}"
 PR=""
 REPO_ARGS=()
@@ -46,6 +50,11 @@ Options:
   -n, --max-diff-chars N        Diff truncation limit in characters (default: $MAX_DIFF_CHARS)
   -y, --yes                     Apply without asking for confirmation
   -f, --force                   Generate even if a human-written description exists
+  -t, --title                   Also generate a PR title from the diff. If the head
+                                branch carries a card id (e.g. intop-123-...), it is
+                                added as an [INTOP-123] prefix.
+  -c, --conventional            Format the generated title as a Conventional Commit
+                                (e.g. "feat: ..."). Implies --title.
   -p, --prompt-file PATH        Path to a file containing a custom prompt.
                                 The diff is always appended after the prompt text.
                                 Overrides PR_SUMMARISE_PROMPT_FILE.
@@ -62,6 +71,10 @@ Environment variables:
                                 primary model hits rate limits.
                                 Default: openai/gpt-4o,openai/gpt-4o-mini
                                 Set to "" to disable automatic fallback.
+  PR_SUMMARISE_TITLE            Set to any non-empty value to generate a title by
+                                default (equivalent to --title).
+  PR_SUMMARISE_CONVENTIONAL     Set to any non-empty value to format the title as a
+                                Conventional Commit by default (implies --title).
 EOF
 }
 
@@ -83,6 +96,10 @@ while [[ $# -gt 0 ]]; do
       YES=true; shift ;;
     -f|--force)
       FORCE=true; shift ;;
+    -t|--title)
+      GENERATE_TITLE=true; shift ;;
+    -c|--conventional)
+      CONVENTIONAL=true; shift ;;
     -p|--prompt-file)
       PROMPT_FILE="$2"; shift 2 ;;
     -*)
@@ -94,6 +111,9 @@ while [[ $# -gt 0 ]]; do
       PR="$1"; shift ;;
   esac
 done
+
+# --conventional only makes sense alongside title generation.
+[[ "$CONVENTIONAL" == true ]] && GENERATE_TITLE=true
 
 # ── Validate prompt file ───────────────────────────────────────────────────────
 if [[ -n "$PROMPT_FILE" && ! -r "$PROMPT_FILE" ]]; then
@@ -223,51 +243,99 @@ invoke_model() {
   echo "$response"
 }
 
-echo "Generating summary via GitHub Models ($MODEL)..."
-RESPONSE=$(invoke_model "$MODEL")
-ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""' 2>/dev/null) || ERROR_CODE=""
+# Runs the model for a given prompt, applying rate-limit fallback and diff
+# auto-tuning, then echoes the message content on stdout. All progress and error
+# messages go to stderr so the caller can capture the content via $(...).
+# Returns non-zero on failure (rate-limited chain exhausted, or empty content).
+#   $1 = label used in messages (e.g. "summary", "title")
+#   $2 = prompt text (consumed by call_model via PROMPT_TEXT)
+generate_content() {
+  local label="$1"
+  PROMPT_TEXT="$2"
+  local response error_code content
 
-if [[ ( "$ERROR_CODE" == "rate_limit_exceeded" || "$RESPONSE" == *"Too many requests"* ) && -n "$FALLBACK_MODELS" ]]; then
-  IFS=',' read -ra FALLBACKS <<< "$FALLBACK_MODELS"
-  for fallback in "${FALLBACKS[@]}"; do
-    echo "Rate limit reached for $MODEL. Retrying with $fallback..." >&2
-    MODEL="$fallback"
-    RESPONSE=$(invoke_model "$MODEL")
-    ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""' 2>/dev/null) || ERROR_CODE=""
-    [[ "$ERROR_CODE" != "rate_limit_exceeded" ]] && break
-  done
-fi
+  echo "Generating $label via GitHub Models ($MODEL)..." >&2
+  response=$(invoke_model "$MODEL")
+  error_code=$(echo "$response" | jq -r '.error.code // ""' 2>/dev/null) || error_code=""
 
-if [[ "$ERROR_CODE" == "rate_limit_exceeded" || "$RESPONSE" == *"Too many requests"* ]]; then
-  echo "Error: rate limit reached for all models in the fallback chain." >&2
-  echo "Try again later or set PR_SUMMARISE_FALLBACK_MODELS to a different chain." >&2
-  exit 1
-fi
-
-# Auto-tune: if the diff is too large, halve it and retry (up to 3 times).
-DIFF_RETRIES=0
-while [[ "$ERROR_CODE" == "tokens_limit_reached" && "$DIFF_RETRIES" -lt 3 ]]; do
-  DIFF_RETRIES=$(( DIFF_RETRIES + 1 ))
-  MAX_DIFF_CHARS=$(( MAX_DIFF_CHARS / 2 ))
-  DIFF="${FULL_DIFF:0:$MAX_DIFF_CHARS}"
-  echo "Diff too large for $MODEL. Retrying with --max-diff-chars $MAX_DIFF_CHARS..." >&2
-  RESPONSE=$(invoke_model "$MODEL")
-  ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""' 2>/dev/null) || ERROR_CODE=""
-done
-
-SUMMARY=$(echo "$RESPONSE" | jq -r '.choices[0].message.content' 2>/dev/null) || SUMMARY=""
-
-if [[ -z "$SUMMARY" || "$SUMMARY" == "null" ]]; then
-  if [[ "$ERROR_CODE" == "tokens_limit_reached" ]]; then
-    ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error.message // ""' 2>/dev/null) || ERROR_MSG=""
-    echo "Error: $ERROR_MSG" >&2
-    echo "Hint: reduce the diff size with --max-diff-chars (current: $MAX_DIFF_CHARS)" >&2
-    echo "      or choose a model with a larger context window — run 'gh models list'" >&2
-  else
-    echo "Error: no summary returned by GitHub Models. Raw response:" >&2
-    echo "$RESPONSE" >&2
+  if [[ ( "$error_code" == "rate_limit_exceeded" || "$response" == *"Too many requests"* ) && -n "$FALLBACK_MODELS" ]]; then
+    local fallback
+    IFS=',' read -ra FALLBACKS <<< "$FALLBACK_MODELS"
+    for fallback in "${FALLBACKS[@]}"; do
+      echo "Rate limit reached for $MODEL. Retrying with $fallback..." >&2
+      MODEL="$fallback"
+      response=$(invoke_model "$MODEL")
+      error_code=$(echo "$response" | jq -r '.error.code // ""' 2>/dev/null) || error_code=""
+      [[ "$error_code" != "rate_limit_exceeded" ]] && break
+    done
   fi
+
+  if [[ "$error_code" == "rate_limit_exceeded" || "$response" == *"Too many requests"* ]]; then
+    echo "Error: rate limit reached for all models in the fallback chain." >&2
+    echo "Try again later or set PR_SUMMARISE_FALLBACK_MODELS to a different chain." >&2
+    return 1
+  fi
+
+  # Auto-tune: if the diff is too large, halve it and retry (up to 3 times).
+  local diff_retries=0
+  while [[ "$error_code" == "tokens_limit_reached" && "$diff_retries" -lt 3 ]]; do
+    diff_retries=$(( diff_retries + 1 ))
+    MAX_DIFF_CHARS=$(( MAX_DIFF_CHARS / 2 ))
+    DIFF="${FULL_DIFF:0:$MAX_DIFF_CHARS}"
+    echo "Diff too large for $MODEL. Retrying with --max-diff-chars $MAX_DIFF_CHARS..." >&2
+    response=$(invoke_model "$MODEL")
+    error_code=$(echo "$response" | jq -r '.error.code // ""' 2>/dev/null) || error_code=""
+  done
+
+  content=$(echo "$response" | jq -r '.choices[0].message.content' 2>/dev/null) || content=""
+
+  if [[ -z "$content" || "$content" == "null" ]]; then
+    if [[ "$error_code" == "tokens_limit_reached" ]]; then
+      local error_msg
+      error_msg=$(echo "$response" | jq -r '.error.message // ""' 2>/dev/null) || error_msg=""
+      echo "Error: $error_msg" >&2
+      echo "Hint: reduce the diff size with --max-diff-chars (current: $MAX_DIFF_CHARS)" >&2
+      echo "      or choose a model with a larger context window — run 'gh models list'" >&2
+    else
+      echo "Error: no $label returned by GitHub Models. Raw response:" >&2
+      echo "$response" >&2
+    fi
+    return 1
+  fi
+
+  printf '%s\n' "$content"
+}
+
+if ! SUMMARY=$(generate_content "summary" "$PROMPT_TEXT"); then
   exit 1
+fi
+
+# ── Generate the PR title (opt-in) ────────────────────────────────────────────
+TITLE=""
+if [[ "$GENERATE_TITLE" == true ]]; then
+  # Card-id prefix is derived deterministically from the head branch name.
+  HEAD_BRANCH=$(gh pr view "${REPO_ARGS[@]}" "$PR" --json headRefName -q '.headRefName' 2>/dev/null || echo "")
+  CARD_PREFIX=""
+  if [[ "$HEAD_BRANCH" =~ ([A-Za-z]+-[0-9]+) ]]; then
+    CARD_PREFIX="[$(echo "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')] "
+  fi
+
+  TITLE_PROMPT="Write a concise, descriptive pull request title (a single line, imperative mood, no trailing period) for this diff. Output only the title text — no surrounding quotes, no code fences, no ticket id."
+  if [[ "$CONVENTIONAL" == true ]]; then
+    TITLE_PROMPT="$TITLE_PROMPT
+Format it as a Conventional Commit: a type (one of feat, fix, docs, refactor, perf, test, build, ci, chore), an optional (scope), then a colon and a space, then the description. Example: feat: add user export endpoint"
+  fi
+
+  if RAW_TITLE=$(generate_content "title" "$TITLE_PROMPT"); then
+    RAW_TITLE="${RAW_TITLE%%$'\n'*}"                         # first line only
+    RAW_TITLE="${RAW_TITLE#"${RAW_TITLE%%[![:space:]]*}"}"   # trim leading space
+    RAW_TITLE="${RAW_TITLE%"${RAW_TITLE##*[![:space:]]}"}"   # trim trailing space
+    RAW_TITLE="${RAW_TITLE#[\`\"\']}"                        # strip wrapping quote/backtick
+    RAW_TITLE="${RAW_TITLE%[\`\"\']}"
+    TITLE="${CARD_PREFIX}${RAW_TITLE}"
+  else
+    echo "Warning: could not generate a title; continuing with the description only." >&2
+  fi
 fi
 
 # ── Compose final body ────────────────────────────────────────────────────────
@@ -279,6 +347,7 @@ fi
 
 # ── Review and confirm ────────────────────────────────────────────────────────
 echo ""
+[[ -n "$TITLE" ]] && echo "Suggested title: $TITLE"
 echo "──── Generated description ($MODEL) ──────────────────────────────────────"
 echo "$FINAL_BODY"
 echo "───────────────────────────────────────────────────────────────────────────"
@@ -291,7 +360,9 @@ else
 fi
 
 if [[ "$confirm" =~ ^[Yy]$ ]]; then
-  gh pr edit "${REPO_ARGS[@]}" "$PR" --body "$FINAL_BODY"
+  EDIT_ARGS=(pr edit "${REPO_ARGS[@]}" "$PR" --body "$FINAL_BODY")
+  [[ -n "$TITLE" ]] && EDIT_ARGS+=(--title "$TITLE")
+  gh "${EDIT_ARGS[@]}"
   PR_URL=$(gh pr view "${REPO_ARGS[@]}" "$PR" --json url -q '.url')
   echo "PR #$PR description updated: $PR_URL"
 else

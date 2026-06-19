@@ -252,6 +252,15 @@ CURLEOF
   [[ "$output" == *"PR_SUMMARISE_PROMPT_FILE"* ]]
 }
 
+@test "--help documents --title and --conventional and their env vars" {
+  run "$SCRIPT" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--title"* ]]
+  [[ "$output" == *"--conventional"* ]]
+  [[ "$output" == *"PR_SUMMARISE_TITLE"* ]]
+  [[ "$output" == *"PR_SUMMARISE_CONVENTIONAL"* ]]
+}
+
 @test "shows actionable hint when model returns tokens_limit_reached" {
   setup_mock_gh ""
 
