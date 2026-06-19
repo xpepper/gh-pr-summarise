@@ -1,3 +1,6 @@
 ## 2024-05-24 - Bash built-in regex matching over subprocesses in loops
 **Learning:** In Bash scripts, especially within loops, spawning subprocesses like `grep`, `sed`, `head`, `cut`, or `tr` incurs significant overhead compared to using Bash built-in regular expression matching (`[[ $var =~ regex ]]`). A simple loop with `[[ =~ ]]` took 0.036s compared to 8.637s when using `echo | grep | sed`.
 **Action:** When performing string matching and extraction in Bash scripts, prefer using `[[ $var =~ regex ]]` and `${BASH_REMATCH[1]}` over piping to subprocesses.
+## 2024-05-24 - Caching expensive CLI commands in Bash scripts
+**Learning:** In Bash scripts, repeatedly executing a CLI command (like `gh auth token`) inside loops or retry logic is inefficient and spawns unneeded subprocesses. In `gh-pr-summarise`, the auth token fetching was placed inside `call_model()` which gets retried upon rate limits.
+**Action:** When a static property is fetched via an expensive external command, cache it in a global variable (e.g. `GH_AUTH_TOKEN="$(gh auth token)"`) once at the script level instead of evaluating it repeatedly. Ensure caching happens *after* any early-exit or argument parsing logic so as not to break non-authenticated flows (e.g., `--help`).
