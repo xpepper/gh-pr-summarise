@@ -67,6 +67,13 @@ A feature or fix is done when:
 - **Transparent model-compat retries** — `invoke_model` wraps `call_model` and retries when
   a model rejects `max_tokens` (retries with `max_completion_tokens`) or rejects an explicit
   `temperature` (retries without it). Covers `gpt-5`, `o1`, `o3`, `o4-mini` and variants.
+- **Optional PR title** — `--title` (`-t`, env `PR_SUMMARISE_TITLE`) makes a second model
+  call to generate a one-line title from the diff. A `[CARD-ID]` prefix is derived
+  deterministically from the head branch (first `key-number` token, uppercased; e.g.
+  `intop-123-foo` → `[INTOP-123] `). `--conventional` (`-c`, env `PR_SUMMARISE_CONVENTIONAL`)
+  formats it as a Conventional Commit and implies `--title`. The description and title share
+  the `generate_content` helper (rate-limit fallback + diff auto-tuning). Title generation is
+  best-effort: on failure the tool warns and still applies the description.
 
 ## Behaviour Matrix
 

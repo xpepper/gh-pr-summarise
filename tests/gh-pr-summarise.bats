@@ -252,6 +252,15 @@ CURLEOF
   [[ "$output" == *"PR_SUMMARISE_PROMPT_FILE"* ]]
 }
 
+@test "--help documents --title and --conventional and their env vars" {
+  run "$SCRIPT" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--title"* ]]
+  [[ "$output" == *"--conventional"* ]]
+  [[ "$output" == *"PR_SUMMARISE_TITLE"* ]]
+  [[ "$output" == *"PR_SUMMARISE_CONVENTIONAL"* ]]
+}
+
 @test "shows actionable hint when model returns tokens_limit_reached" {
   setup_mock_gh ""
 
@@ -432,4 +441,133 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"max_completion_tokens"* ]]
   [[ "$output" != *"\"max_tokens\""* ]]
+}
+
+# ── PR title generation ───────────────────────────────────────────────────────
+
+# Like setup_mock_gh but `gh pr view --json headRefName` returns a branch name,
+# `gh pr edit` echoes its args (so apply-time assertions are possible), and curl
+# returns a fixed title/summary content.
+# Usage: setup_mock_gh_title "body" "branch-name" "model content"
+setup_mock_gh_title() {
+  local body="$1" branch="$2" content="$3"
+  local mock_dir
+  mock_dir="$(mktemp -d)"
+  cat > "$mock_dir/gh" <<EOF
+#!/usr/bin/env bash
+if [[ "\$*" == *"headRefName"* ]]; then
+  echo '$branch'
+elif [[ "\$*" == *"pr edit"* ]]; then
+  echo "EDIT_ARGS: \$*"
+elif [[ "\$*" == *"pr view"* ]]; then
+  echo '$body'
+elif [[ "\$*" == *"pr diff"* ]]; then
+  echo "diff --git a/foo b/foo"
+elif [[ "\$*" == *"auth token"* ]]; then
+  echo "fake-token"
+else
+  echo ""
+fi
+EOF
+  chmod +x "$mock_dir/gh"
+
+  cat > "$mock_dir/curl" <<EOF
+#!/usr/bin/env bash
+cat <<'JSON'
+{"choices":[{"message":{"content":"$content"}}]}
+JSON
+EOF
+  chmod +x "$mock_dir/curl"
+
+  export PATH="$mock_dir:$PATH"
+  export _MOCK_DIR="$mock_dir"
+}
+
+@test "--title adds an uppercased [CARD-ID] prefix parsed from the branch" {
+  setup_mock_gh_title "" "intop-123-add-export-endpoint" "add export endpoint"
+  run bash -c "echo n | $SCRIPT --title 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Suggested title: [INTOP-123] add export endpoint"* ]]
+}
+
+@test "--title handles a card id embedded in a path-style branch name" {
+  setup_mock_gh_title "" "feature/intop-456-thing" "do the thing"
+  run bash -c "echo n | $SCRIPT --title 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Suggested title: [INTOP-456] do the thing"* ]]
+}
+
+@test "--title omits the prefix when the branch has no card id" {
+  setup_mock_gh_title "" "main" "add export endpoint"
+  run bash -c "echo n | $SCRIPT --title 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Suggested title: add export endpoint"* ]]
+  [[ "$output" != *"Suggested title: ["* ]]
+}
+
+@test "no --title means no suggested title is generated" {
+  setup_mock_gh_title "" "intop-123-foo" "add export endpoint"
+  run bash -c "echo n | $SCRIPT 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Suggested title:"* ]]
+}
+
+@test "--conventional sends conventional-commit instructions in the title request" {
+  setup_mock_gh_title "" "intop-123-foo" "feat: add export endpoint"
+  # Override curl to surface the request body so we can inspect what was sent.
+  cat > "$_MOCK_DIR/curl" <<'EOF'
+#!/usr/bin/env bash
+request_body=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "-d" ]]; then request_body="$2"; shift 2; else shift; fi
+done
+echo "API_REQUEST: $request_body" >&2
+echo '{"choices":[{"message":{"content":"feat: add export endpoint"}}]}'
+EOF
+  chmod +x "$_MOCK_DIR/curl"
+
+  run bash -c "echo n | $SCRIPT --conventional 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Conventional Commit"* ]]
+  [[ "$output" == *"Suggested title: [INTOP-123] feat: add export endpoint"* ]]
+}
+
+@test "--conventional implies --title" {
+  setup_mock_gh_title "" "intop-123-foo" "feat: add export endpoint"
+  run bash -c "echo n | $SCRIPT --conventional 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Suggested title:"* ]]
+}
+
+@test "applying with --title passes --title to gh pr edit" {
+  setup_mock_gh_title "" "intop-123-add-export-endpoint" "add export endpoint"
+  run bash -c "$SCRIPT --title --yes 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"EDIT_ARGS:"* ]]
+  [[ "$output" == *"--title"* ]]
+  [[ "$output" == *"[INTOP-123] add export endpoint"* ]]
+}
+
+@test "title generation failure is non-fatal; description is still applied" {
+  setup_mock_gh ""
+
+  local sentinel="$_MOCK_DIR/curl_called"
+  # First call (summary) succeeds; subsequent calls (title) are rate-limited.
+  cat > "$_MOCK_DIR/curl" <<EOF
+#!/usr/bin/env bash
+if [[ ! -e "$sentinel" ]]; then
+  touch "$sentinel"
+  echo '{"choices":[{"message":{"content":"the description"}}]}'
+else
+  echo '{"error":{"code":"rate_limit_exceeded","message":"Rate limit reached"}}'
+fi
+EOF
+  chmod +x "$_MOCK_DIR/curl"
+
+  # Disable fallback so the title call fails fast instead of cycling models.
+  run bash -c "echo n | PR_SUMMARISE_FALLBACK_MODELS='' $SCRIPT --title 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"could not generate a title"* ]]
+  [[ "$output" == *"the description"* ]]
+  [[ "$output" != *"Suggested title:"* ]]
 }
