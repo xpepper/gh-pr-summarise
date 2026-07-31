@@ -668,8 +668,9 @@ fi
 EOF
   chmod +x "$_MOCK_DIR/curl"
 
-  # Disable fallback so the title call fails fast instead of cycling models.
-  run bash -c "echo n | PR_SUMMARISE_FALLBACK_MODELS='' $SCRIPT --title 123"
+  # The backend is already pinned, so the title call fails fast rather than
+  # cycling through a chain.
+  run bash -c "echo n | $SCRIPT --title 123"
   [ "$status" -eq 0 ]
   [[ "$output" == *"could not generate a title"* ]]
   [[ "$output" == *"the description"* ]]

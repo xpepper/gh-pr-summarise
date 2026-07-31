@@ -1,8 +1,13 @@
 # gh pr-summarise
 
-A `gh` extension that generates a pull request description from the diff using [GitHub Models](https://github.com/marketplace/models) (GPT-4.1 by default).
+A `gh` extension that generates a pull request description from the diff using an LLM
+backend of your choice — a local CLI you already have (`claude`, `copilot`, `codex`, …)
+or any OpenAI-compatible endpoint.
 
-No Copilot subscription needed — GitHub Models is free for any GitHub account within [rate limits](https://docs.github.com/billing/managing-billing-for-your-products/about-billing-for-github-models), then pay-as-you-go.
+> **Migrating from v0.1?** [GitHub Models was retired on 2026-07-30](https://github.blog/changelog/2026-07-30-github-models-is-now-retired/)
+> and its inference API now returns HTTP 410, so v0.1 no longer works at all. v0.2 replaces
+> it with pluggable backends. `PR_SUMMARISE_FALLBACK_MODELS` is gone — see
+> [Backends](#backends).
 
 ## Install
 
@@ -22,8 +27,11 @@ gh pr-summarise 123
 # Or paste a GitHub URL directly
 gh pr-summarise https://github.com/owner/repo/pull/123
 
-# Override the model
-gh pr-summarise --model openai/gpt-4o-mini
+# Pick a backend explicitly (otherwise the first available one is auto-detected)
+gh pr-summarise --backend openrouter
+
+# Override the model the backend uses
+gh pr-summarise --backend claude --model sonnet
 
 # Limit the diff size sent to the model (useful for large PRs or models with small context)
 gh pr-summarise --max-diff-chars 10000
@@ -45,8 +53,9 @@ gh pr-summarise --conventional
 
 | Flag | Short | Default | Description |
 |---|---|---|---|
-| `--model` | `-m` | `openai/gpt-4.1` | Model to use. To list available models, install the optional [`gh-models`](https://github.com/github/gh-models) extension and run `gh models list`. |
-| `--max-diff-chars` | `-n` | `28000` | Diff truncation limit (~7k tokens, under GitHub Models' 8k cap). |
+| `--backend` | `-b` | auto-detected | Backend to use — see [Backends](#backends). |
+| `--model` | `-m` | backend's own | Model to use. Meaning depends on the backend (`haiku` for `claude`, `openai/gpt-oss-20b:free` for `openrouter`). |
+| `--max-diff-chars` | `-n` | `28000` | Diff truncation limit. Clamped down further if the backend's own budget is smaller. |
 | `--yes` | `-y` | — | Apply without asking for confirmation. |
 | `--force` | `-f` | — | Generate even if a human-written description already exists. |
 | `--title` | `-t` | — | Also generate a PR title from the diff (see [PR title](#pr-title)). |
@@ -85,44 +94,88 @@ fails (e.g. rate-limited), the tool warns and still applies the description.
 
 The tool detects its own output via an HTML comment marker (`<!-- pr-summarise -->`) embedded at the end of every generated description. If you edit a generated description and want to protect your changes from being overwritten on the next run, remove that marker.
 
-### Rate limits and automatic fallback
+## Backends
 
-GitHub Models enforces per-model daily request limits on free accounts. When the primary model
-is rate-limited, the tool automatically retries with the next model in the fallback chain
-(`openai/gpt-4o` → `openai/gpt-4o-mini` by default) and prints a notice to stderr.
+A backend is either a **local CLI** you already have installed or an
+**OpenAI-compatible HTTP endpoint**. With no `--backend`, the first available of
+`claude,copilot,openrouter` is used; the rest act as a fallback chain if it fails.
+Override the order with `PR_SUMMARISE_BACKENDS`, or pin one with `--backend`.
 
-If all models in the chain are rate-limited, the tool exits with a clear error and suggests
-adjusting `PR_SUMMARISE_FALLBACK_MODELS`.
+A pinned backend is never silently swapped for another — if you name it, you get it or an
+error.
 
-### Token limits
+| Backend | Needs | Cost | Notes |
+|---|---|---|---|
+| `claude` | `claude` CLI | Claude subscription | Defaults to the `haiku` model. |
+| `copilot` | `copilot` CLI | Copilot AI credits | Roughly 8–9 credits per call: its own system prompt dominates the request. |
+| `openrouter` | `OPENROUTER_API_KEY` | free tier available | 50 requests/day (1 000/day after $10 in credits), 20 req/min. Defaults to `openai/gpt-oss-20b:free`. |
+| `openai` | `PR_SUMMARISE_ENDPOINT` | depends | Any OpenAI-compatible endpoint: Microsoft Foundry, OpenRouter, Ollama, llama.cpp, `apfel --serve`. |
+| `pi` / `omp` | that CLI | provider API key | |
+| `codex` | `codex` CLI | ChatGPT subscription | |
+| `agy` | `agy` CLI | | |
+| `opencode` | `opencode` CLI | provider API key | |
+| `llm` | [`llm`](https://llm.datasette.io) | provider API key | The broadest escape hatch: hundreds of models via plugins, including local ones via `llm-ollama`. |
+| `apfel` | [`apfel`](https://apfel.franzai.com/) | **free, offline** | Apple's on-device model. macOS 26+ on Apple Silicon. See the caveat below. |
 
-If the diff is too large for the selected model, the tool automatically retries up to three
-times, halving the diff on each attempt (28 000 → 14 000 → 7 000 → 3 500 characters). If
-the diff is still too large after all retries, it exits with an actionable error message
-suggesting `--max-diff-chars` or `gh models list` to find a larger-context model.
+### Choosing a backend
+
+`claude`, `copilot` and `openrouter` all produce good descriptions. Pick on cost: `openrouter`
+is free but slower (10–35s) and rate-limited; `copilot` is the most accurate but bills
+credits per call; `claude` is fast and covered by a subscription you may already pay for.
+
+`apfel` is the only free *offline* option, but its context window is a hard 4 096 tokens
+(~3 584 usable), which caps the diff at **8 000 characters** rather than 28 000 — the tool
+clamps this automatically. On anything but a small PR it will summarise only the first
+fragment of the diff, so treat it as a fast local draft rather than a replacement for the
+cloud backends.
+
+### Fallback
+
+If a backend fails — CLI error, empty output, rate limit, or a **truncated** response — the
+tool moves to the next one in the chain and prints a notice to stderr. The banner names the
+backend that actually produced the text.
+
+A truncated answer is treated as a failure rather than applied to the PR. This matters for
+reasoning models: they can spend the entire output budget on hidden reasoning tokens, return
+HTTP 200, and hand back a description that stops mid-sentence.
+
+### Caveats when using agent CLIs
+
+`claude`, `copilot`, `codex`, `agy`, `opencode`, `pi` and `omp` are coding agents rather than
+plain completion APIs. The tool runs them from an empty scratch directory with stdin closed,
+so they cannot pick up the current repo's `AGENTS.md`/`CLAUDE.md` or swallow the confirmation
+prompt. They **do** still honour your *user-global* instructions (`~/.claude/CLAUDE.md`,
+`~/.codex/AGENTS.md`, …) — that is your own configuration, so the tool leaves it alone. If
+your global instructions tell the agent to prefix every reply with a marker, that marker will
+show up in generated descriptions.
 
 ### Newer OpenAI model compatibility
 
 Newer OpenAI models (`gpt-5`, `o1`, `o3`, `o4-mini`, and variants) require
 `max_completion_tokens` instead of `max_tokens` and reject an explicit `temperature` value.
-The tool detects these errors and retries transparently — no extra flags needed.
+The HTTP backends detect these errors and retry transparently — no extra flags needed.
 
 ## Configuration
 
 Environment variables for advanced use:
 
 ```bash
-# Org-attributed usage (tracks API consumption against your org's quota)
-export PR_SUMMARISE_ENDPOINT="https://models.github.ai/orgs/<YOUR_ORG>/inference/chat/completions"
+# Pin a backend (equivalent to always passing --backend)
+export PR_SUMMARISE_BACKEND="openrouter"
+
+# Change the auto-detection and fallback order
+export PR_SUMMARISE_BACKENDS="openrouter,claude,copilot"
+
+# Required by the openrouter backend
+export OPENROUTER_API_KEY="sk-or-v1-..."
+
+# Any OpenAI-compatible endpoint, used by the `openai` backend.
+# Ollama, llama.cpp and `apfel --serve` all speak this protocol.
+export PR_SUMMARISE_ENDPOINT="http://localhost:11434/v1/chat/completions"
+export PR_SUMMARISE_API_KEY="..."
 
 # Custom system prompt loaded from a file (overridden by --prompt-file)
 export PR_SUMMARISE_PROMPT_FILE="/path/to/my-prompt.txt"
-
-# Disable automatic model fallback on rate limits
-export PR_SUMMARISE_FALLBACK_MODELS=""
-
-# Use a custom fallback chain
-export PR_SUMMARISE_FALLBACK_MODELS="openai/gpt-4o,phi-4"
 
 # Generate a title by default (equivalent to always passing --title)
 export PR_SUMMARISE_TITLE=1
@@ -134,8 +187,9 @@ export PR_SUMMARISE_CONVENTIONAL=1
 ## Requirements
 
 - [`gh`](https://cli.github.com) — GitHub CLI, authenticated via `gh auth login`
-- `curl` — HTTP client (standard on macOS and Linux)
 - `jq` — JSON processor ([jqlang.org](https://jqlang.org))
+- `curl` — HTTP client (standard on macOS and Linux); only needed by the HTTP backends
+- At least one [backend](#backends)
 
 ## Update
 
@@ -157,20 +211,20 @@ A permanent test PR lives at **https://github.com/xpepper/gh-pr-summarise/pull/1
 # Manual smoke test (prints the generated description, does not apply it)
 echo "n" | gh pr-summarise https://github.com/xpepper/gh-pr-summarise/pull/1
 
-# Automated integration test (calls GitHub Models API and edits the test PR)
+# Automated integration test (calls a real backend and edits the test PR)
 make integration-test
 ```
 
 > `make integration-test` is intentionally excluded from `make test` to avoid unintended API calls and PR edits in CI.
 
-To test compatibility across all models available in GitHub Models, run the matrix script:
+To check which backends actually work on this machine, run the matrix script:
 
 ```bash
-# Test every model from `gh models list` against the test PR
-bash scripts/model-matrix.sh
+# Try every known backend against the test PR
+bash scripts/backend-matrix.sh
 
-# Test against a different PR or with a smaller diff limit
-bash scripts/model-matrix.sh --test-pr https://github.com/owner/repo/pull/123 --max-diff-chars 500
+# Test a subset, a different PR, or a smaller diff limit
+bash scripts/backend-matrix.sh --backends claude,openrouter --test-pr https://github.com/owner/repo/pull/123
 ```
 
-Results and known compatibility notes are documented in [`docs/model-compatibility.md`](docs/model-compatibility.md).
+Measured results are documented in [`docs/backend-compatibility.md`](docs/backend-compatibility.md).
