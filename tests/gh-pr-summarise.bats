@@ -652,6 +652,30 @@ MOCK
   [[ "$output" == *"safe copilot summary"* ]]
 }
 
+@test "OMP runs with built-in tools off and extension discovery disabled" {
+  setup_mock_gh ""
+
+  cat > "$_MOCK_DIR/omp" <<'MOCK'
+#!/usr/bin/env bash
+has_no_tools=false
+has_no_extensions=false
+for arg in "$@"; do
+  [[ "$arg" == "--no-tools" ]] && has_no_tools=true
+  [[ "$arg" == "--no-extensions" ]] && has_no_extensions=true
+done
+if [[ "$has_no_tools" == true && "$has_no_extensions" == true ]]; then
+  echo "safe omp summary"
+  exit 0
+fi
+exit 1
+MOCK
+  chmod +x "$_MOCK_DIR/omp"
+
+  run bash -c "echo n | PR_SUMMARISE_BACKEND=omp bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"safe omp summary"* ]]
+}
+
 @test "--title adds an uppercased [CARD-ID] prefix parsed from the branch" {
   setup_mock_gh_title "" "intop-123-add-export-endpoint" "add export endpoint"
   run bash -c "echo n | $SCRIPT --title 123"

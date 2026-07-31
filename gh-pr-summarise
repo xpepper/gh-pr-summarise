@@ -381,8 +381,10 @@ backend_pi_generate() {
 backend_omp_available() { command -v omp >/dev/null 2>&1; }
 backend_omp_model()     { echo ""; }
 backend_omp_budget()    { echo 28000; }
+# --no-tools only covers omp's *built-in* tools, so a discovered extension could
+# still expose tools to an untrusted diff. --no-extensions closes that door.
 backend_omp_generate() {
-  local args=(-p --no-tools --no-session --system-prompt "$1")
+  local args=(-p --no-tools --no-extensions --no-session --system-prompt "$1")
   local model
   model="$(resolve_model omp)"
   [[ -n "$model" ]] && args+=(--model "$model")
