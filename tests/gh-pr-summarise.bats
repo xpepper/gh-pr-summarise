@@ -35,9 +35,19 @@ EOF
 
   export PATH="$mock_dir:$PATH"
   export _MOCK_DIR="$mock_dir"
+  pin_http_backend
+}
+
+# Pins the backend so tests never auto-detect a real CLI that happens to be
+# installed on the developer's machine (claude, copilot, ...). The openrouter
+# backend speaks HTTP, so the existing `curl` mocks drive it.
+pin_http_backend() {
+  export PR_SUMMARISE_BACKEND="openrouter"
+  export OPENROUTER_API_KEY="fake-key"
 }
 
 teardown() {
+  unset PR_SUMMARISE_BACKEND OPENROUTER_API_KEY PR_SUMMARISE_BACKENDS
   if [[ -n "${_MOCK_DIR:-}" ]]; then
     rm -rf "$_MOCK_DIR"
     unset _MOCK_DIR
@@ -124,11 +134,27 @@ teardown() {
   [[ "$output" == *"Generated description"* ]]
 }
 
-@test "output banner includes the active model name" {
+@test "output banner includes the active backend and model name" {
   setup_mock_gh ""
   run bash -c "echo n | $SCRIPT --model openai/gpt-4o-mini 123"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Generated description (openai/gpt-4o-mini)"* ]]
+  [[ "$output" == *"Generated description (openrouter: openai/gpt-4o-mini)"* ]]
+}
+
+# The banner must name the backend that actually produced the text, not the one
+# we started with — otherwise a silent fallback misattributes the output.
+@test "output banner names the fallback backend after the first one fails" {
+  setup_mock_gh ""
+  cat > "$_MOCK_DIR/claude" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+  chmod +x "$_MOCK_DIR/claude"
+
+  unset PR_SUMMARISE_BACKEND
+  run bash -c "echo n | PR_SUMMARISE_BACKENDS=claude,openrouter bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Generated description (openrouter:"* ]]
 }
 
 @test "preserves tracker URL prefix in generated body" {
@@ -206,6 +232,7 @@ CURLEOF
 
   export PATH="$mock_dir:$PATH"
   export _MOCK_DIR="$mock_dir"
+  pin_http_backend
 }
 
 @test "--prompt-file uses custom prompt text in API call" {
@@ -261,67 +288,54 @@ CURLEOF
   [[ "$output" == *"PR_SUMMARISE_CONVENTIONAL"* ]]
 }
 
-@test "shows actionable hint when model returns tokens_limit_reached" {
-  setup_mock_gh ""
-
-  # Override the curl stub to return a tokens_limit_reached error
-  cat > "$_MOCK_DIR/curl" <<'EOF'
-#!/usr/bin/env bash
-echo '{"error":{"code":"tokens_limit_reached","message":"Request body too large for deepseek-v3-0324 model. Max size: 4000 tokens."}}'
-EOF
-  chmod +x "$_MOCK_DIR/curl"
-
-  run bash "$SCRIPT" 123
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"too large"* ]]
-  [[ "$output" == *"--max-diff-chars"* ]]
-  [[ "$output" == *"gh models list"* ]]
+@test "unknown --backend exits 1 and lists the known backends" {
+  run "$SCRIPT" --backend nosuchbackend 123
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"unknown backend"* ]]
+  [[ "$output" == *"openrouter"* ]]
 }
 
-@test "automatically falls back to next model on rate_limit_exceeded" {
-  setup_mock_gh ""
-
-  local sentinel="$_MOCK_DIR/curl_called"   # inside mock dir, cleaned up by teardown
-
-  cat > "$_MOCK_DIR/curl" <<EOF
-#!/usr/bin/env bash
-if [[ ! -e "$sentinel" ]]; then
-  touch "$sentinel"
-  echo '{"error":{"code":"rate_limit_exceeded","message":"Rate limit reached for openai/gpt-4.1"}}'
-else
-  echo '{"choices":[{"message":{"content":"summary from fallback model"}}]}'
-fi
-EOF
-  chmod +x "$_MOCK_DIR/curl"
-
-  run bash -c "echo n | bash '$SCRIPT' 123"
+@test "--help documents --backend and its env vars" {
+  run "$SCRIPT" --help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Rate limit"* ]]
-  [[ "$output" == *"summary from fallback model"* ]]
+  [[ "$output" == *"--backend"* ]]
+  [[ "$output" == *"PR_SUMMARISE_BACKEND"* ]]
+  [[ "$output" == *"PR_SUMMARISE_BACKENDS"* ]]
 }
 
-@test "falls back when API returns HTML Too many requests instead of JSON" {
+@test "falls back to the next backend in the chain when the first one fails" {
   setup_mock_gh ""
 
-  local sentinel="$_MOCK_DIR/curl_called"
-
-  cat > "$_MOCK_DIR/curl" <<EOF
+  cat > "$_MOCK_DIR/claude" <<'EOF'
 #!/usr/bin/env bash
-if [[ ! -e "$sentinel" ]]; then
-  touch "$sentinel"
-  echo 'Too many requests. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service.'
-else
-  echo '{"choices":[{"message":{"content":"summary from fallback model"}}]}'
-fi
+echo "claude exploded" >&2
+exit 1
 EOF
-  chmod +x "$_MOCK_DIR/curl"
+  chmod +x "$_MOCK_DIR/claude"
 
-  run bash -c "echo n | bash '$SCRIPT' 123"
+  unset PR_SUMMARISE_BACKEND
+  run bash -c "echo n | PR_SUMMARISE_BACKENDS=claude,openrouter bash '$SCRIPT' 123"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"summary from fallback model"* ]]
+  [[ "$output" == *"Generated summary."* ]]
 }
 
-@test "exits with helpful message when all fallback models are also rate-limited" {
+@test "falls back to the next backend when a backend returns empty output" {
+  setup_mock_gh ""
+
+  # Exits 0 but prints nothing — a silent failure mode real CLIs do exhibit.
+  cat > "$_MOCK_DIR/claude" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$_MOCK_DIR/claude"
+
+  unset PR_SUMMARISE_BACKEND
+  run bash -c "echo n | PR_SUMMARISE_BACKENDS=claude,openrouter bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Generated summary."* ]]
+}
+
+@test "exits with helpful message when every backend in the chain fails" {
   setup_mock_gh ""
 
   cat > "$_MOCK_DIR/curl" <<'EOF'
@@ -332,44 +346,112 @@ EOF
 
   run bash "$SCRIPT" 123
   [ "$status" -ne 0 ]
-  [[ "$output" == *"rate limit reached for all models"* ]]
-  [[ "$output" == *"PR_SUMMARISE_FALLBACK_MODELS"* ]]
+  [[ "$output" == *"no backend could generate"* ]]
+  [[ "$output" == *"PR_SUMMARISE_BACKENDS"* ]]
 }
 
-@test "automatically reduces diff size and retries when tokens_limit_reached" {
+@test "exits with a helpful message when no backend is available at all" {
   setup_mock_gh ""
+  unset PR_SUMMARISE_BACKEND OPENROUTER_API_KEY
 
-  local sentinel="$_MOCK_DIR/curl_called"
-
-  cat > "$_MOCK_DIR/curl" <<EOF
-#!/usr/bin/env bash
-if [[ ! -e "$sentinel" ]]; then
-  touch "$sentinel"
-  echo '{"error":{"code":"tokens_limit_reached","message":"Request too large."}}'
-else
-  echo '{"choices":[{"message":{"content":"summary after diff reduction"}}]}'
-fi
-EOF
-  chmod +x "$_MOCK_DIR/curl"
-
-  run bash -c "echo n | bash '$SCRIPT' 123"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"summary after diff reduction"* ]]
+  # Both HTTP backends gate on an env var rather than on a binary, so unsetting
+  # those is a PATH-independent way to make every backend in the chain absent.
+  run bash -c "unset PR_SUMMARISE_ENDPOINT; PR_SUMMARISE_BACKENDS=openai,openrouter bash '$SCRIPT' 123"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no usable backend"* ]]
 }
 
-@test "exits with actionable error after exhausting all diff reduction retries" {
+@test "pinned backend that is unavailable does not silently fall through" {
+  setup_mock_gh ""
+  unset OPENROUTER_API_KEY
+
+  run bash -c "unset PR_SUMMARISE_ENDPOINT; PR_SUMMARISE_BACKEND=openai bash '$SCRIPT' 123"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no usable backend"* ]]
+  [[ "$output" == *"'openai' is not available"* ]]
+}
+
+# A truncated description must never be silently applied to the PR: the live
+# OpenRouter run hit exactly this when reasoning tokens ate the output budget.
+@test "treats finish_reason=length as a backend failure" {
   setup_mock_gh ""
 
   cat > "$_MOCK_DIR/curl" <<'EOF'
 #!/usr/bin/env bash
-echo '{"error":{"code":"tokens_limit_reached","message":"Request too large for this model."}}'
+echo '{"choices":[{"finish_reason":"length","message":{"content":"This summary was cut off mid-"}}]}'
 EOF
   chmod +x "$_MOCK_DIR/curl"
 
   run bash "$SCRIPT" 123
   [ "$status" -ne 0 ]
-  [[ "$output" == *"--max-diff-chars"* ]]
-  [[ "$output" == *"gh models list"* ]]
+  [[ "$output" == *"truncated"* ]]
+  [[ "$output" != *"This summary was cut off mid-"* ]]
+}
+
+@test "clamps the diff to the backend's own budget when it is smaller" {
+  setup_mock_gh ""
+
+  # A diff far larger than apfel's 8000-char budget.
+  cat > "$_MOCK_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$*" == *"pr view"* ]]; then
+  echo ""
+elif [[ "$*" == *"pr diff"* ]]; then
+  head -c 20000 /dev/zero | tr '\0' 'x'
+elif [[ "$*" == *"auth token"* ]]; then
+  echo "fake-token"
+else
+  echo ""
+fi
+EOF
+  chmod +x "$_MOCK_DIR/gh"
+
+  # apfel echoes back how many characters of diff it actually received.
+  cat > "$_MOCK_DIR/apfel" <<'EOF'
+#!/usr/bin/env bash
+diff_file=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "-f" ]]; then diff_file="$2"; shift 2; else shift; fi
+done
+echo "RECEIVED_CHARS=$(wc -c < "$diff_file" | tr -d ' ')"
+EOF
+  chmod +x "$_MOCK_DIR/apfel"
+
+  run bash -c "echo n | PR_SUMMARISE_BACKEND=apfel bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"RECEIVED_CHARS=8000"* ]]
+}
+
+@test "--max-diff-chars still wins when smaller than the backend budget" {
+  setup_mock_gh ""
+
+  cat > "$_MOCK_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$*" == *"pr view"* ]]; then
+  echo ""
+elif [[ "$*" == *"pr diff"* ]]; then
+  head -c 20000 /dev/zero | tr '\0' 'x'
+elif [[ "$*" == *"auth token"* ]]; then
+  echo "fake-token"
+else
+  echo ""
+fi
+EOF
+  chmod +x "$_MOCK_DIR/gh"
+
+  cat > "$_MOCK_DIR/apfel" <<'EOF'
+#!/usr/bin/env bash
+diff_file=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "-f" ]]; then diff_file="$2"; shift 2; else shift; fi
+done
+echo "RECEIVED_CHARS=$(wc -c < "$diff_file" | tr -d ' ')"
+EOF
+  chmod +x "$_MOCK_DIR/apfel"
+
+  run bash -c "echo n | PR_SUMMARISE_BACKEND=apfel bash '$SCRIPT' --max-diff-chars 500 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"RECEIVED_CHARS=500"* ]]
 }
 
 @test "retries without temperature when model rejects it" {
@@ -481,6 +563,28 @@ EOF
 
   export PATH="$mock_dir:$PATH"
   export _MOCK_DIR="$mock_dir"
+  pin_http_backend
+}
+
+# Guards against the whole CLI-backend path silently sending the wrong thing:
+# a backend that merely returns *something* would pass every other assertion.
+@test "CLI backends receive the resolved prompt and the diff" {
+  setup_mock_gh ""
+  local prompt_file="$_MOCK_DIR/prompt.txt"
+  echo "SENTINEL custom instructions." > "$prompt_file"
+
+  cat > "$_MOCK_DIR/claude" <<'EOF'
+#!/usr/bin/env bash
+# Echo back the prompt argument so the test can inspect what was sent.
+for arg in "$@"; do :; done
+echo "SENT>>> $arg"
+EOF
+  chmod +x "$_MOCK_DIR/claude"
+
+  run bash -c "echo n | PR_SUMMARISE_BACKEND=claude bash '$SCRIPT' --prompt-file '$prompt_file' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"SENTINEL custom instructions."* ]]
+  [[ "$output" == *"diff --git a/foo b/foo"* ]]
 }
 
 @test "--title adds an uppercased [CARD-ID] prefix parsed from the branch" {
