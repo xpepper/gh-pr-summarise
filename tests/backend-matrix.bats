@@ -37,6 +37,19 @@ Backend 'opencode' is not available — is its CLI installed and its API key set
   [ "$output" = "⏭️ unavailable" ]
 }
 
+@test "an unknown backend is reported as invalid rather than unavailable" {
+  local input="Error: unknown backend: typo
+Known backends: claude copilot openrouter"
+
+  run_backend_matrix_function classify "$input"
+  [ "$status" -eq 0 ]
+  [ "$output" = "❌ invalid backend" ]
+
+  run_backend_matrix_function notes "$input"
+  [ "$status" -eq 0 ]
+  [ "$output" = "unknown backend name" ]
+}
+
 @test "a backend that ran but returned nothing is reported as no output" {
   run_backend_matrix_function classify "Generating summary via opencode...
 Backend opencode produced no summary.

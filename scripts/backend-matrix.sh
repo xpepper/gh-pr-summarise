@@ -45,7 +45,10 @@ _analyze_output() {
 
   # A backend that was never usable is skipped, not broken: saying "failed"
   # for a CLI that simply is not installed would be misleading.
-  if [[ "$output" == *"no usable backend"* ]]; then
+  if [[ "$output" == *"unknown backend"* ]]; then
+    RESULT_STATUS="❌ invalid backend"
+    RESULT_NOTE="unknown backend name"
+  elif [[ "$output" == *"no usable backend"* ]]; then
     RESULT_STATUS="⏭️ unavailable"
     RESULT_NOTE="not installed, or its API key is unset"
   elif [[ "$output" == *"Generated description"* || "$output" == *"description updated"* ]]; then
