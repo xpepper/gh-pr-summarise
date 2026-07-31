@@ -1,10 +1,15 @@
 #!/usr/bin/env bats
-# Integration tests — require gh auth and GitHub Models API access.
+# Integration tests — require gh auth and a working backend.
 # These tests modify the live test PR. Run with: make integration-test
+#
+# Set PR_SUMMARISE_BACKEND to choose which backend is exercised; it defaults to
+# openrouter because that one is free, so a full run costs nothing.
 
 SCRIPT="$BATS_TEST_DIRNAME/../gh-pr-summarise"
 TEST_PR_URL="https://github.com/xpepper/gh-pr-summarise/pull/1"
 MARKER="<!-- pr-summarise -->"
+
+export PR_SUMMARISE_BACKEND="${PR_SUMMARISE_BACKEND:-openrouter}"
 
 @test "skips PR that has a human-written description" {
   gh pr edit --repo xpepper/gh-pr-summarise 1 \
@@ -48,14 +53,23 @@ MARKER="<!-- pr-summarise -->"
   [ "$marker_count" -eq 1 ]
 }
 
-@test "works with openai/gpt-5 which requires max_completion_tokens and no temperature" {
-  run "$SCRIPT" --model openai/gpt-5 --force --yes "$TEST_PR_URL"
+@test "the generated body is never a truncated response" {
+  run "$SCRIPT" --force --yes "$TEST_PR_URL"
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"PR #1 description updated"* ]]
+  [[ "$output" != *"was truncated"* ]]
 
   body=$(gh pr view --repo xpepper/gh-pr-summarise 1 --json body -q '.body')
   [[ "$body" == *"$MARKER"* ]]
+  # The marker is appended last, so its presence means generation ran to completion.
+  [[ "$body" == *"$MARKER" ]]
+}
+
+@test "the banner names the backend that produced the description" {
+  run "$SCRIPT" --force --yes "$TEST_PR_URL"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Generated description ($PR_SUMMARISE_BACKEND"* ]]
 }
 
 @test "preserves tracker URL prefix when generating a description" {

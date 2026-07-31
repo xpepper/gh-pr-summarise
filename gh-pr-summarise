@@ -1,26 +1,43 @@
 #!/usr/bin/env bash
-# gh pr-summarise: Generate and apply a PR description using GitHub Models.
+# gh pr-summarise: Generate and apply a PR description using a pluggable LLM backend.
+#
+# Backends are either a local CLI (claude, copilot, ...) or an OpenAI-compatible
+# HTTP endpoint (openrouter, openai). See "Backend contract" below.
 #
 # Required tools:
 #   gh    - GitHub CLI (https://cli.github.com), authenticated via `gh auth login`
-#   curl  - HTTP client, used to call the GitHub Models API
 #   jq    - JSON processor (https://jqlang.org)
+#   curl  - HTTP client, only needed by the HTTP backends
 
 set -euo pipefail
 
 # ── Version ───────────────────────────────────────────────────────────────────
-VERSION="0.1.0"
+VERSION="0.2.0"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
-MODEL="${PR_SUMMARISE_MODEL:-openai/gpt-4.1}"
+# Empty means "let the backend choose its own default model".
+MODEL="${PR_SUMMARISE_MODEL:-}"
 MAX_DIFF_CHARS="${PR_SUMMARISE_MAX_DIFF_CHARS:-28000}"
-ENDPOINT="${PR_SUMMARISE_ENDPOINT:-https://models.github.ai/inference/chat/completions}"
-# For org attribution, set:
-# export PR_SUMMARISE_ENDPOINT="https://models.github.ai/orgs/<ORG>/inference/chat/completions"
 
-# Comma-separated fallback chain used when the primary model hits rate limits.
-# Override with PR_SUMMARISE_FALLBACK_MODELS env var; set to "" to disable.
-FALLBACK_MODELS="${PR_SUMMARISE_FALLBACK_MODELS:-openai/gpt-4o,openai/gpt-4o-mini}"
+# Wall-clock budget for a single backend attempt, in seconds (0 disables it).
+# A CLI that blocks on interactive auth or a stalled request would otherwise
+# pin the run forever and the rest of the fallback chain would never be tried.
+BACKEND_TIMEOUT="${PR_SUMMARISE_TIMEOUT:-300}"
+
+# Every backend this script knows how to drive.
+KNOWN_BACKENDS="claude copilot openrouter openai pi omp llm apfel"
+
+# Backends whose CLI exposes no model selection at all, so --model cannot be
+# forwarded. They must never be *labelled* with a requested model either: the
+# banner would credit a model that never saw the diff.
+MODEL_LESS_BACKENDS="apfel"
+
+# Backend pinned explicitly by the user (--backend / PR_SUMMARISE_BACKEND).
+BACKEND="${PR_SUMMARISE_BACKEND:-}"
+
+# Auto-detection order used when no backend is pinned. The first available one
+# wins; the rest act as a fallback chain if it fails.
+BACKEND_CHAIN="${PR_SUMMARISE_BACKENDS:-claude,copilot,openrouter}"
 
 YES=false
 FORCE=false
@@ -37,17 +54,26 @@ usage() {
   cat <<EOF
 Usage: gh pr-summarise [PR] [options]
 
-Generate a PR description from the diff using GitHub Models and optionally
+Generate a PR description from the diff using an LLM backend and optionally
 apply it to the pull request.
 
 PR can be a number (123) or a full GitHub URL
 (https://github.com/owner/repo/pull/123).
 If omitted, uses the open PR for the current branch.
 
+Backends:
+  $KNOWN_BACKENDS
+
+  With no --backend, the first available of "$BACKEND_CHAIN"
+  is used, and the rest act as a fallback chain if it fails.
+
 Options:
-  -m, --model MODEL             Model to use (default: $MODEL)
-                                Run 'gh models list' to see available models.
+  -b, --backend NAME            Backend to use. Overrides auto-detection.
+  -m, --model MODEL             Model to use. Defaults to the backend's own
+                                default (e.g. haiku for claude,
+                                openai/gpt-oss-20b:free for openrouter).
   -n, --max-diff-chars N        Diff truncation limit in characters (default: $MAX_DIFF_CHARS)
+                                Clamped down further if the backend needs it.
   -y, --yes                     Apply without asking for confirmation
   -f, --force                   Generate even if a human-written description exists
   -t, --title                   Also generate a PR title from the diff. If the head
@@ -62,15 +88,17 @@ Options:
   -v, --version                 Show version
 
 Environment variables:
-  PR_SUMMARISE_ENDPOINT         Override the GitHub Models API endpoint.
-                                Useful for org-attributed usage:
-                                https://models.github.ai/orgs/<ORG>/inference/chat/completions
+  PR_SUMMARISE_BACKEND          Pin a single backend (same as --backend).
+  PR_SUMMARISE_BACKENDS         Comma-separated auto-detection and fallback chain.
+                                Default: claude,copilot,openrouter
+  PR_SUMMARISE_MODEL            Model to use (same as --model).
+  OPENROUTER_API_KEY            Required by the 'openrouter' backend.
+  PR_SUMMARISE_ENDPOINT         OpenAI-compatible endpoint for the 'openai' backend.
+                                Works with Microsoft Foundry, OpenRouter, Ollama,
+                                llama.cpp, 'apfel --serve', etc.
+  PR_SUMMARISE_API_KEY          Bearer token for the 'openai' backend.
   PR_SUMMARISE_PROMPT_FILE      Path to a file containing a custom prompt.
                                 Overridden by --prompt-file.
-  PR_SUMMARISE_FALLBACK_MODELS  Comma-separated fallback model chain used when the
-                                primary model hits rate limits.
-                                Default: openai/gpt-4o,openai/gpt-4o-mini
-                                Set to "" to disable automatic fallback.
   PR_SUMMARISE_TITLE            Set to any non-empty value to generate a title by
                                 default (equivalent to --title).
   PR_SUMMARISE_CONVENTIONAL     Set to any non-empty value to format the title as a
@@ -85,6 +113,8 @@ while [[ $# -gt 0 ]]; do
       usage; exit 0 ;;
     -v|--version)
       echo "gh pr-summarise $VERSION"; exit 0 ;;
+    -b|--backend)
+      BACKEND="$2"; shift 2 ;;
     -m|--model)
       MODEL="$2"; shift 2 ;;
     -n|--max-diff-chars)
@@ -114,6 +144,14 @@ done
 
 # --conventional only makes sense alongside title generation.
 [[ "$CONVENTIONAL" == true ]] && GENERATE_TITLE=true
+
+# ── Validate backend selection ────────────────────────────────────────────────
+# Done before any network or `gh` call so a typo fails instantly.
+if [[ -n "$BACKEND" && " $KNOWN_BACKENDS " != *" $BACKEND "* ]]; then
+  echo "Error: unknown backend: $BACKEND" >&2
+  echo "Known backends: $KNOWN_BACKENDS" >&2
+  exit 1
+fi
 
 # ── Validate prompt file ───────────────────────────────────────────────────────
 if [[ -n "$PROMPT_FILE" && ! -r "$PROMPT_FILE" ]]; then
@@ -185,54 +223,70 @@ Format:
 Output only raw Markdown text. Do not wrap the output in a code fence or backtick block."
 fi
 
-# Cache the auth token to avoid repeatedly spawning `gh` subprocesses
-GH_AUTH_TOKEN="$(gh auth token)"
+# ── Backend contract ──────────────────────────────────────────────────────────
+# Every backend <n> implements four functions:
+#
+#   backend_<n>_available    exit 0 if the backend can be used right now
+#   backend_<n>_model        echo its default model id (may be empty)
+#   backend_<n>_budget       echo the max diff chars it can accept
+#   backend_<n>_generate     $1=prompt $2=diff -> content on STDOUT, non-zero on
+#                            failure. Everything else (progress, warnings, the
+#                            backend's own chatter) MUST go to stderr.
+#
+# The stdout discipline is what lets every CLI backend be a one-liner: the
+# wrapper captures $(...) and redirects the CLI's stderr away.
 
-# ── Call GitHub Models (with fallback on rate limit) ─────────────────────────
-call_model() {
-  local model="$1"
-  local tokens_param="${2:-max_tokens}"
-  local include_temperature="${3:-true}"
+# ── HTTP backends (OpenAI-compatible) ─────────────────────────────────────────
+
+# Issues one OpenAI-compatible chat completion and echoes the raw JSON response.
+#   $1=endpoint $2=key $3=model $4=prompt $5=diff $6=max_tokens
+#   $7=tokens param name  $8=send an explicit temperature (true/false)
+http_call() {
+  local endpoint="$1" key="$2" model="$3" prompt="$4" diff="$5" max_tokens="$6"
+  local tokens_param="$7" include_temperature="$8"
   local body
   body=$(jq -n \
     --arg model  "$model" \
-    --arg prompt "$PROMPT_TEXT" \
-    --arg diff   "$DIFF" \
+    --arg prompt "$prompt" \
+    --arg diff   "$diff" \
     --arg tparam "$tokens_param" \
+    --argjson maxtok "$max_tokens" \
     --argjson include_temp "$include_temperature" \
     '{
       model: $model,
-      ($tparam): 500,
+      ($tparam): $maxtok,
       messages: [{
         role: "user",
         content: "\($prompt)\n\n\($diff)"
       }]
     } + (if $include_temp then {temperature: 0.2} else {} end)')
-  curl -sS -L "$ENDPOINT" \
-    -H "Authorization: Bearer $GH_AUTH_TOKEN" \
-    -H "Accept: application/vnd.github+json" \
-    -H "X-GitHub-Api-Version: 2022-11-28" \
+  curl -sS -L "$endpoint" \
+    -H "Authorization: Bearer $key" \
     -H "Content-Type: application/json" \
+    ${HTTP_EXTRA_HEADERS[@]+"${HTTP_EXTRA_HEADERS[@]}"} \
     -d "$body"
 }
 
-# Calls call_model and retries transparently when the model rejects:
-#   - max_tokens (newer OpenAI models require max_completion_tokens instead)
-#   - temperature (some models only support the default and reject explicit values)
-invoke_model() {
-  local model="$1"
+# Wraps http_call with the two portability retries every OpenAI-compatible
+# provider eventually needs, then extracts the content.
+#   - max_tokens rejected: newer OpenAI models want max_completion_tokens
+#   - temperature rejected: some models only accept their default
+http_generate() {
+  local endpoint="$1" key="$2" model="$3" prompt="$4" diff="$5" max_tokens="$6"
   local tokens_param="max_tokens"
   local include_temperature="true"
-  local response error_code error_param
+  local response error_code error_param content finish_reason
 
-  response=$(call_model "$model" "$tokens_param" "$include_temperature")
+  response=$(http_call "$endpoint" "$key" "$model" "$prompt" "$diff" "$max_tokens" \
+    "$tokens_param" "$include_temperature")
   error_code=$(echo "$response" | jq -r '.error.code // ""' 2>/dev/null) || error_code=""
   error_param=$(echo "$response" | jq -r '.error.param // ""' 2>/dev/null) || error_param=""
 
   if [[ "$error_code" == "unsupported_parameter" && "$error_param" == "max_tokens" ]]; then
     echo "Model $model requires max_completion_tokens, retrying..." >&2
     tokens_param="max_completion_tokens"
-    response=$(call_model "$model" "$tokens_param" "$include_temperature")
+    response=$(http_call "$endpoint" "$key" "$model" "$prompt" "$diff" "$max_tokens" \
+      "$tokens_param" "$include_temperature")
     error_code=$(echo "$response" | jq -r '.error.code // ""' 2>/dev/null) || error_code=""
     error_param=$(echo "$response" | jq -r '.error.param // ""' 2>/dev/null) || error_param=""
   fi
@@ -240,78 +294,316 @@ invoke_model() {
   if [[ "$error_code" == "unsupported_value" && "$error_param" == "temperature" ]]; then
     echo "Model $model does not support custom temperature, retrying..." >&2
     include_temperature="false"
-    response=$(call_model "$model" "$tokens_param" "$include_temperature")
+    response=$(http_call "$endpoint" "$key" "$model" "$prompt" "$diff" "$max_tokens" \
+      "$tokens_param" "$include_temperature")
   fi
 
-  echo "$response"
-}
-
-# Runs the model for a given prompt, applying rate-limit fallback and diff
-# auto-tuning, then echoes the message content on stdout. All progress and error
-# messages go to stderr so the caller can capture the content via $(...).
-# Returns non-zero on failure (rate-limited chain exhausted, or empty content).
-#   $1 = label used in messages (e.g. "summary", "title")
-#   $2 = prompt text (consumed by call_model via PROMPT_TEXT)
-generate_content() {
-  local label="$1"
-  PROMPT_TEXT="$2"
-  local response error_code content
-
-  echo "Generating $label via GitHub Models ($MODEL)..." >&2
-  response=$(invoke_model "$MODEL")
-  error_code=$(echo "$response" | jq -r '.error.code // ""' 2>/dev/null) || error_code=""
-
-  if [[ ( "$error_code" == "rate_limit_exceeded" || "$response" == *"Too many requests"* ) && -n "$FALLBACK_MODELS" ]]; then
-    local fallback
-    IFS=',' read -ra FALLBACKS <<< "$FALLBACK_MODELS"
-    for fallback in "${FALLBACKS[@]}"; do
-      echo "Rate limit reached for $MODEL. Retrying with $fallback..." >&2
-      MODEL="$fallback"
-      response=$(invoke_model "$MODEL")
-      error_code=$(echo "$response" | jq -r '.error.code // ""' 2>/dev/null) || error_code=""
-      [[ "$error_code" != "rate_limit_exceeded" ]] && break
-    done
-  fi
-
-  if [[ "$error_code" == "rate_limit_exceeded" || "$response" == *"Too many requests"* ]]; then
-    echo "Error: rate limit reached for all models in the fallback chain." >&2
-    echo "Try again later or set PR_SUMMARISE_FALLBACK_MODELS to a different chain." >&2
+  # A truncated answer must never reach the PR body. Reasoning models can burn
+  # the whole output budget on hidden tokens and still return HTTP 200.
+  finish_reason=$(echo "$response" | jq -r '.choices[0].finish_reason // ""' 2>/dev/null) || finish_reason=""
+  if [[ "$finish_reason" == "length" ]]; then
+    echo "Response was truncated (finish_reason=length) — output budget of $max_tokens tokens was too small." >&2
     return 1
   fi
 
-  # Auto-tune: if the diff is too large, halve it and retry (up to 3 times).
-  local diff_retries=0
-  while [[ "$error_code" == "tokens_limit_reached" && "$diff_retries" -lt 3 ]]; do
-    diff_retries=$(( diff_retries + 1 ))
-    MAX_DIFF_CHARS=$(( MAX_DIFF_CHARS / 2 ))
-    DIFF="${FULL_DIFF:0:$MAX_DIFF_CHARS}"
-    echo "Diff too large for $MODEL. Retrying with --max-diff-chars $MAX_DIFF_CHARS..." >&2
-    response=$(invoke_model "$MODEL")
-    error_code=$(echo "$response" | jq -r '.error.code // ""' 2>/dev/null) || error_code=""
-  done
-
-  content=$(echo "$response" | jq -r '.choices[0].message.content' 2>/dev/null) || content=""
-
+  content=$(echo "$response" | jq -r '.choices[0].message.content // ""' 2>/dev/null) || content=""
   if [[ -z "$content" || "$content" == "null" ]]; then
-    if [[ "$error_code" == "tokens_limit_reached" ]]; then
-      local error_msg
-      error_msg=$(echo "$response" | jq -r '.error.message // ""' 2>/dev/null) || error_msg=""
-      echo "Error: $error_msg" >&2
-      echo "Hint: reduce the diff size with --max-diff-chars (current: $MAX_DIFF_CHARS)" >&2
-      echo "      or choose a model with a larger context window — run 'gh models list'" >&2
-    else
-      echo "Error: no $label returned by GitHub Models. Raw response:" >&2
-      echo "$response" >&2
-    fi
+    echo "Raw response: $response" >&2
     return 1
   fi
 
   printf '%s\n' "$content"
 }
 
-if ! SUMMARY=$(generate_content "summary" "$PROMPT_TEXT"); then
+backend_openrouter_available() { [[ -n "${OPENROUTER_API_KEY:-}" ]]; }
+backend_openrouter_model()     { echo "openai/gpt-oss-20b:free"; }
+backend_openrouter_budget()    { echo 28000; }
+backend_openrouter_generate() {
+  # 1200 rather than 500: gpt-oss-20b:free spends ~200-300 tokens on hidden
+  # reasoning before emitting a single visible character.
+  HTTP_EXTRA_HEADERS=(
+    -H "HTTP-Referer: https://github.com/xpepper/gh-pr-summarise"
+    -H "X-Title: gh-pr-summarise"
+  )
+  http_generate "https://openrouter.ai/api/v1/chat/completions" \
+    "${OPENROUTER_API_KEY:-}" "$(resolve_model openrouter)" "$1" "$2" 1200
+}
+
+backend_openai_available() { [[ -n "${PR_SUMMARISE_ENDPOINT:-}" ]]; }
+backend_openai_model()     { echo "gpt-4.1-mini"; }
+backend_openai_budget()    { echo 28000; }
+backend_openai_generate() {
+  HTTP_EXTRA_HEADERS=()
+  http_generate "${PR_SUMMARISE_ENDPOINT:-}" "${PR_SUMMARISE_API_KEY:-}" \
+    "$(resolve_model openai)" "$1" "$2" 1200
+}
+
+# ── CLI backends ──────────────────────────────────────────────────────────────
+# All of these take the prompt and diff as one blob and print the answer on
+# stdout; their own banners and telemetry go to stderr, which we discard.
+#
+# Two rules every CLI backend follows:
+#
+#   </dev/null  - the y/N confirmation prompt reads stdin, and agent CLIs can
+#                 swallow the answer otherwise.
+#   AGENT_CWD   - agent CLIs auto-load AGENTS.md / CLAUDE.md from the working
+#                 directory. Run from the repo root they follow *this* project's
+#                 instructions rather than the summarisation prompt, so they run
+#                 from an empty scratch directory instead.
+AGENT_CWD="$(mktemp -d)"
+trap 'rm -rf "$AGENT_CWD"' EXIT
+
+backend_claude_available() { command -v claude >/dev/null 2>&1; }
+backend_claude_model()     { echo "haiku"; }
+backend_claude_budget()    { echo 28000; }
+backend_claude_generate() {
+  (cd "$AGENT_CWD" && claude -p --safe-mode --tools "" --no-session-persistence \
+    --model "$(resolve_model claude)" "$1
+
+$2") 2>/dev/null </dev/null
+}
+
+backend_copilot_available() { command -v copilot >/dev/null 2>&1; }
+backend_copilot_model()     { echo ""; }
+backend_copilot_budget()    { echo 28000; }
+backend_copilot_generate() {
+  local args=(-p "$1
+
+$2" --no-color --log-level none --available-tools= --disable-builtin-mcps
+    --no-custom-instructions --no-remote --no-remote-export)
+  local model
+  model="$(resolve_model copilot)"
+  [[ -n "$model" ]] && args+=(--model "$model")
+  (cd "$AGENT_CWD" && copilot "${args[@]}") 2>/dev/null </dev/null
+}
+
+backend_pi_available() { command -v pi >/dev/null 2>&1; }
+backend_pi_model()     { echo ""; }
+backend_pi_budget()    { echo 28000; }
+backend_pi_generate() {
+  local args=(-p --no-tools --no-session --no-context-files --system-prompt "$1")
+  local model
+  model="$(resolve_model pi)"
+  [[ -n "$model" ]] && args+=(--model "$model")
+  (cd "$AGENT_CWD" && pi "${args[@]}" "$2") 2>/dev/null </dev/null
+}
+
+backend_omp_available() { command -v omp >/dev/null 2>&1; }
+backend_omp_model()     { echo ""; }
+backend_omp_budget()    { echo 28000; }
+# --no-tools only covers omp's *built-in* tools, so a discovered extension could
+# still expose tools to an untrusted diff. --no-extensions closes that door.
+backend_omp_generate() {
+  local args=(-p --no-tools --no-extensions --no-session --system-prompt "$1")
+  local model
+  model="$(resolve_model omp)"
+  [[ -n "$model" ]] && args+=(--model "$model")
+  (cd "$AGENT_CWD" && omp "${args[@]}" "$2") 2>/dev/null </dev/null
+}
+
+backend_llm_available() { command -v llm >/dev/null 2>&1; }
+backend_llm_model()     { echo ""; }
+backend_llm_budget()    { echo 28000; }
+backend_llm_generate() {
+  local args=(-s "$1" --no-log)
+  local model
+  model="$(resolve_model llm)"
+  [[ -n "$model" ]] && args+=(-m "$model")
+  printf '%s' "$2" | llm "${args[@]}" 2>/dev/null
+}
+
+# Apple's on-device model. Hard 4096-token context (~3584 usable for the
+# prompt), which works out to roughly 8000 chars of diff.
+backend_apfel_available() { command -v apfel >/dev/null 2>&1; }
+backend_apfel_model()     { echo ""; }
+backend_apfel_budget()    { echo 8000; }
+backend_apfel_generate() {
+  local diff_file status
+  diff_file="$(mktemp)"
+  printf '%s' "$2" > "$diff_file"
+  apfel -q --temperature 0.2 --max-tokens 500 -s "$1" \
+    -f "$diff_file" "Write the response for the attached diff." 2>/dev/null </dev/null
+  status=$?
+  rm -f "$diff_file"
+  return $status
+}
+
+# ── Backend selection and dispatch ────────────────────────────────────────────
+HTTP_EXTRA_HEADERS=()
+
+backend_is_model_less() { [[ " $MODEL_LESS_BACKENDS " == *" $1 "* ]]; }
+
+# Explicit --model wins; otherwise fall back to the backend's own default.
+# A model-less backend always reports its own default, whatever --model says.
+resolve_model() {
+  if [[ -n "$MODEL" ]] && ! backend_is_model_less "$1"; then
+    echo "$MODEL"
+  else
+    "backend_$1_model"
+  fi
+}
+
+# Human-readable "backend" or "backend: model". Backends that let their own CLI
+# pick the model have no model id to show.
+describe_backend() {
+  local model
+  model="$(resolve_model "$1")"
+  if [[ -n "$model" ]]; then
+    echo "$1: $model"
+  else
+    echo "$1"
+  fi
+}
+
+# Builds the ordered list of backends to try. A pinned backend is used on its
+# own — silently falling through to a different provider would be surprising
+# when the user named one explicitly.
+resolve_backend_chain() {
+  local candidates=() backend
+  if [[ -n "$BACKEND" ]]; then
+    # Pinned backend plus an explicit model: the user asked for both and only
+    # one can be honoured, so say so instead of quietly dropping the model.
+    if [[ -n "$MODEL" ]] && backend_is_model_less "$BACKEND"; then
+      echo "Error: $BACKEND does not support --model — its CLI exposes no model selection." >&2
+      echo "Drop --model (and PR_SUMMARISE_MODEL) or pick another backend." >&2
+      return 1
+    fi
+    candidates=("$BACKEND")
+  else
+    IFS=',' read -ra candidates <<< "$BACKEND_CHAIN"
+  fi
+
+  ACTIVE_BACKENDS=()
+  for backend in "${candidates[@]}"; do
+    [[ -z "$backend" ]] && continue
+    if [[ " $KNOWN_BACKENDS " != *" $backend "* ]]; then
+      echo "Warning: ignoring unknown backend in chain: $backend" >&2
+      continue
+    fi
+    if "backend_${backend}_available"; then
+      ACTIVE_BACKENDS+=("$backend")
+    fi
+  done
+
+  if [[ ${#ACTIVE_BACKENDS[@]} -eq 0 ]]; then
+    echo "Error: no usable backend found." >&2
+    if [[ -n "$BACKEND" ]]; then
+      echo "Backend '$BACKEND' is not available — is its CLI installed and its API key set?" >&2
+    else
+      echo "Tried: $BACKEND_CHAIN" >&2
+      echo "Install one of: $KNOWN_BACKENDS, or set PR_SUMMARISE_BACKENDS." >&2
+    fi
+    return 1
+  fi
+}
+
+# Best-effort TERM of a process and its descendants. The CLI usually sits a
+# subshell or two below the job we started, and only pgrep can find it — where
+# pgrep is missing we still kill the job itself, which is enough to move on.
+kill_tree() {
+  local pid="$1" child
+  if command -v pgrep >/dev/null 2>&1; then
+    for child in $(pgrep -P "$pid" 2>/dev/null); do
+      kill_tree "$child"
+    done
+  fi
+  kill -TERM "$pid" 2>/dev/null || true
+}
+
+# Runs a command under a wall-clock deadline, capturing its stdout in a file.
+#   $1 = output file, $2 = seconds (0 disables), $3.. = command and arguments
+# Returns 124 on expiry, like timeout(1) — which a stock macOS does not ship,
+# hence the hand-rolled watchdog.
+#
+# The output goes to a file rather than through $(...) on purpose: a killed CLI
+# can leave a grandchild holding the write end of a pipe, and command
+# substitution would then wait on that pipe forever — the very stall this
+# guards against.
+run_with_deadline() {
+  local out="$1" secs="$2"
+  shift 2
+  local pid watchdog status=0
+
+  if [[ "$secs" -le 0 ]]; then
+    "$@" > "$out" || status=$?
+    return "$status"
+  fi
+
+  "$@" > "$out" &
+  pid=$!
+  # The watchdog gets its own stdio: anything reading ours (a pipe, a caller
+  # capturing output) would otherwise block until the watchdog's sleep expires,
+  # turning the guard into the stall.
+  ( sleep "$secs"; kill_tree "$pid" ) >/dev/null 2>&1 &
+  watchdog=$!
+
+  wait "$pid" || status=$?
+  if kill -0 "$watchdog" 2>/dev/null; then
+    # kill_tree, not kill: the watchdog's sleep would outlive its parent.
+    kill_tree "$watchdog"
+    wait "$watchdog" 2>/dev/null || true
+  else
+    # The watchdog is gone, so it fired: the command did not finish in time.
+    status=124
+  fi
+  return "$status"
+}
+
+# Generates content by trying each active backend in order.
+#
+# Sets GENERATED_CONTENT and ACTIVE_BACKEND on success. Deliberately does NOT
+# echo the content: callers used to capture it via $(...), which ran this in a
+# subshell and lost track of which backend actually answered — so the banner
+# could name a backend that never produced the text.
+#   $1 = label used in messages (e.g. "summary", "title")
+#   $2 = prompt text
+generate_content() {
+  local label="$1" prompt="$2"
+  local backend budget diff content attempt_out status
+
+  GENERATED_CONTENT=""
+  for backend in "${ACTIVE_BACKENDS[@]}"; do
+    budget="$("backend_${backend}_budget")"
+    [[ "$MAX_DIFF_CHARS" -lt "$budget" ]] && budget="$MAX_DIFF_CHARS"
+    diff="${FULL_DIFF:0:$budget}"
+
+    if [[ -n "$MODEL" ]] && backend_is_model_less "$backend"; then
+      echo "Note: $backend ignores --model; using its built-in model." >&2
+    fi
+    echo "Generating $label via $(describe_backend "$backend")..." >&2
+    attempt_out="$(mktemp)"
+    status=0
+    run_with_deadline "$attempt_out" "$BACKEND_TIMEOUT" \
+      "backend_${backend}_generate" "$prompt" "$diff" || status=$?
+    content="$(cat "$attempt_out")"
+    rm -f "$attempt_out"
+
+    if [[ "$status" -eq 0 && -n "$content" ]]; then
+      GENERATED_CONTENT="$content"
+      ACTIVE_BACKEND="$backend"
+      return 0
+    fi
+    if [[ "$status" -eq 124 ]]; then
+      echo "Backend $backend timed out after ${BACKEND_TIMEOUT}s." >&2
+    else
+      echo "Backend $backend produced no $label." >&2
+    fi
+  done
+
+  echo "Error: no backend could generate a $label." >&2
+  echo "Tried: ${ACTIVE_BACKENDS[*]}" >&2
+  echo "Hint: try another backend with --backend, adjust PR_SUMMARISE_BACKENDS," >&2
+  echo "      or reduce the diff size with --max-diff-chars (current: $MAX_DIFF_CHARS)" >&2
+  return 1
+}
+
+resolve_backend_chain || exit 1
+
+if ! generate_content "summary" "$PROMPT_TEXT"; then
   exit 1
 fi
+SUMMARY="$GENERATED_CONTENT"
+SUMMARY_BACKEND="$ACTIVE_BACKEND"
 
 # ── Generate the PR title (opt-in) ────────────────────────────────────────────
 TITLE=""
@@ -329,7 +621,8 @@ if [[ "$GENERATE_TITLE" == true ]]; then
 Format it as a Conventional Commit: a type (one of feat, fix, docs, refactor, perf, test, build, ci, chore), an optional (scope), then a colon and a space, then the description. Example: feat: add user export endpoint"
   fi
 
-  if RAW_TITLE=$(generate_content "title" "$TITLE_PROMPT"); then
+  if generate_content "title" "$TITLE_PROMPT"; then
+    RAW_TITLE="$GENERATED_CONTENT"
     RAW_TITLE="${RAW_TITLE%%$'\n'*}"                         # first line only
     RAW_TITLE="${RAW_TITLE#"${RAW_TITLE%%[![:space:]]*}"}"   # trim leading space
     RAW_TITLE="${RAW_TITLE%"${RAW_TITLE##*[![:space:]]}"}"   # trim trailing space
@@ -351,7 +644,7 @@ fi
 # ── Review and confirm ────────────────────────────────────────────────────────
 echo ""
 [[ -n "$TITLE" ]] && echo "Suggested title: $TITLE"
-echo "──── Generated description ($MODEL) ──────────────────────────────────────"
+echo "──── Generated description ($(describe_backend "$SUMMARY_BACKEND")) ────"
 echo "$FINAL_BODY"
 echo "───────────────────────────────────────────────────────────────────────────"
 echo ""
