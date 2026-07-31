@@ -676,6 +676,32 @@ MOCK
   [[ "$output" == *"safe omp summary"* ]]
 }
 
+@test "pinning a model-less backend together with --model is rejected" {
+  setup_mock_gh ""
+
+  printf '#!/usr/bin/env bash\necho "apfel summary"\n' > "$_MOCK_DIR/apfel"
+  chmod +x "$_MOCK_DIR/apfel"
+
+  run bash -c "echo n | PR_SUMMARISE_BACKEND=apfel bash '$SCRIPT' --model gpt-5 123"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"apfel does not support --model"* ]]
+  [[ "$output" != *"apfel summary"* ]]
+}
+
+@test "a model-less backend reached through the chain warns and keeps its own model" {
+  setup_mock_gh ""
+  unset PR_SUMMARISE_BACKEND
+
+  printf '#!/usr/bin/env bash\necho "apfel summary"\n' > "$_MOCK_DIR/apfel"
+  chmod +x "$_MOCK_DIR/apfel"
+
+  run bash -c "echo n | PR_SUMMARISE_BACKENDS=apfel PR_SUMMARISE_MODEL=gpt-5 bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"apfel summary"* ]]
+  [[ "$output" == *"ignores --model"* ]]
+  [[ "$output" != *"apfel: gpt-5"* ]]
+}
+
 @test "--title adds an uppercased [CARD-ID] prefix parsed from the branch" {
   setup_mock_gh_title "" "intop-123-add-export-endpoint" "add export endpoint"
   run bash -c "echo n | $SCRIPT --title 123"

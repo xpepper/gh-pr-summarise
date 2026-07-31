@@ -22,6 +22,11 @@ MAX_DIFF_CHARS="${PR_SUMMARISE_MAX_DIFF_CHARS:-28000}"
 # Every backend this script knows how to drive.
 KNOWN_BACKENDS="claude copilot openrouter openai pi omp llm apfel"
 
+# Backends whose CLI exposes no model selection at all, so --model cannot be
+# forwarded. They must never be *labelled* with a requested model either: the
+# banner would credit a model that never saw the diff.
+MODEL_LESS_BACKENDS="apfel"
+
 # Backend pinned explicitly by the user (--backend / PR_SUMMARISE_BACKEND).
 BACKEND="${PR_SUMMARISE_BACKEND:-}"
 
@@ -421,9 +426,12 @@ backend_apfel_generate() {
 # ── Backend selection and dispatch ────────────────────────────────────────────
 HTTP_EXTRA_HEADERS=()
 
+backend_is_model_less() { [[ " $MODEL_LESS_BACKENDS " == *" $1 "* ]]; }
+
 # Explicit --model wins; otherwise fall back to the backend's own default.
+# A model-less backend always reports its own default, whatever --model says.
 resolve_model() {
-  if [[ -n "$MODEL" ]]; then
+  if [[ -n "$MODEL" ]] && ! backend_is_model_less "$1"; then
     echo "$MODEL"
   else
     "backend_$1_model"
@@ -448,6 +456,13 @@ describe_backend() {
 resolve_backend_chain() {
   local candidates=() backend
   if [[ -n "$BACKEND" ]]; then
+    # Pinned backend plus an explicit model: the user asked for both and only
+    # one can be honoured, so say so instead of quietly dropping the model.
+    if [[ -n "$MODEL" ]] && backend_is_model_less "$BACKEND"; then
+      echo "Error: $BACKEND does not support --model — its CLI exposes no model selection." >&2
+      echo "Drop --model (and PR_SUMMARISE_MODEL) or pick another backend." >&2
+      return 1
+    fi
     candidates=("$BACKEND")
   else
     IFS=',' read -ra candidates <<< "$BACKEND_CHAIN"
@@ -495,6 +510,9 @@ generate_content() {
     [[ "$MAX_DIFF_CHARS" -lt "$budget" ]] && budget="$MAX_DIFF_CHARS"
     diff="${FULL_DIFF:0:$budget}"
 
+    if [[ -n "$MODEL" ]] && backend_is_model_less "$backend"; then
+      echo "Note: $backend ignores --model; using its built-in model." >&2
+    fi
     echo "Generating $label via $(describe_backend "$backend")..." >&2
     if content=$("backend_${backend}_generate" "$prompt" "$diff") && [[ -n "$content" ]]; then
       GENERATED_CONTENT="$content"

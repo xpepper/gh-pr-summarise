@@ -132,7 +132,7 @@ through to the next.
 | Flag | Short | Default | Description |
 |---|---|---|---|
 | `--backend` | `-b` | auto-detected | Backend to use — see [Backends](#backends). |
-| `--model` | `-m` | backend's own | Model to use. Meaning depends on the backend (`haiku` for `claude`, `openai/gpt-oss-20b:free` for `openrouter`). |
+| `--model` | `-m` | backend's own | Model to use. Meaning depends on the backend (`haiku` for `claude`, `openai/gpt-oss-20b:free` for `openrouter`). `apfel` has a single on-device model: pinning it with `--model` is an error, and reaching it through the fallback chain warns and uses its own model. |
 | `--max-diff-chars` | `-n` | `28000` | Diff truncation limit. Clamped down further if the backend's own budget is smaller. |
 | `--yes` | `-y` | — | Apply without asking for confirmation. |
 | `--force` | `-f` | — | Generate even if a human-written description already exists. |
