@@ -539,6 +539,7 @@ if ! generate_content "summary" "$PROMPT_TEXT"; then
   exit 1
 fi
 SUMMARY="$GENERATED_CONTENT"
+SUMMARY_BACKEND="$ACTIVE_BACKEND"
 
 # ── Generate the PR title (opt-in) ────────────────────────────────────────────
 TITLE=""
@@ -579,7 +580,7 @@ fi
 # ── Review and confirm ────────────────────────────────────────────────────────
 echo ""
 [[ -n "$TITLE" ]] && echo "Suggested title: $TITLE"
-echo "──── Generated description ($(describe_backend "$ACTIVE_BACKEND")) ────"
+echo "──── Generated description ($(describe_backend "$SUMMARY_BACKEND")) ────"
 echo "$FINAL_BODY"
 echo "───────────────────────────────────────────────────────────────────────────"
 echo ""

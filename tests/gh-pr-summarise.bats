@@ -691,6 +691,34 @@ EOF
   [[ "$output" != *"Suggested title:"* ]]
 }
 
+@test "title generation does not overwrite the description backend attribution" {
+  setup_mock_gh_title "" "main" "unused"
+  unset PR_SUMMARISE_BACKEND
+  export PR_SUMMARISE_BACKENDS="claude,copilot"
+
+  local claude_called="$_MOCK_DIR/claude_called"
+  cat > "$_MOCK_DIR/claude" <<EOF
+#!/usr/bin/env bash
+if [[ ! -e "$claude_called" ]]; then
+  touch "$claude_called"
+  exit 1
+fi
+echo "title from claude"
+EOF
+  chmod +x "$_MOCK_DIR/claude"
+
+  cat > "$_MOCK_DIR/copilot" <<'MOCK'
+#!/usr/bin/env bash
+echo "description from copilot"
+MOCK
+  chmod +x "$_MOCK_DIR/copilot"
+
+  run bash -c "echo n | bash '$SCRIPT' --title 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Suggested title: title from claude"* ]]
+  [[ "$output" == *"Generated description (copilot)"* ]]
+}
+
 @test "banner omits the colon for backends that carry no model id" {
   setup_mock_gh ""
   cat > "$_MOCK_DIR/copilot" <<'MOCK'
