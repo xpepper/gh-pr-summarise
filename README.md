@@ -9,6 +9,10 @@ or any OpenAI-compatible endpoint.
 > it with pluggable backends. `PR_SUMMARISE_FALLBACK_MODELS` is gone — see
 > [Backends](#backends).
 
+> **Agent safety:** only agent CLIs with a supported no-tools mode are offered as backends.
+> Codex, Agy and OpenCode are intentionally unsupported because their current CLIs cannot
+> disable all model tools for an untrusted PR diff.
+
 ## Requirements
 
 - [`gh`](https://cli.github.com) — GitHub CLI, authenticated via `gh auth login`
@@ -185,8 +189,6 @@ error.
 | `openrouter` | `OPENROUTER_API_KEY` | free tier available | 50 requests/day (1 000/day after $10 in credits), 20 req/min. Defaults to `openai/gpt-oss-20b:free`. |
 | `openai` | `PR_SUMMARISE_ENDPOINT` | depends | Any OpenAI-compatible endpoint: Microsoft Foundry, OpenRouter, Ollama, llama.cpp, `apfel --serve`. |
 | `pi` / `omp` | that CLI | provider API key | |
-| `agy` | `agy` CLI | | |
-| `opencode` | `opencode` CLI | provider API key | |
 | `llm` | [`llm`](https://llm.datasette.io) | provider API key | The broadest escape hatch: hundreds of models via plugins, including local ones via `llm-ollama`. |
 | `apfel` | [`apfel`](https://apfel.franzai.com/) | **free, offline** | Apple's on-device model. macOS 26+ on Apple Silicon. See the caveat below. |
 
@@ -200,7 +202,7 @@ error.
 | `openai` | `export PR_SUMMARISE_ENDPOINT=...` and, if the endpoint needs one, `PR_SUMMARISE_API_KEY`. |
 | `llm` | `uv tool install llm` (or `pipx install llm`), then `llm keys set openai` — or `llm install llm-ollama` for local models. |
 | `apfel` | `brew install apfel`. macOS 26+ on Apple Silicon, with Apple Intelligence enabled. |
-| `pi` / `omp` / `agy` / `opencode` | Install the CLI and authenticate it however that tool expects. |
+| `pi` / `omp` | Install the CLI and authenticate it however that tool expects. |
 
 To see which are actually working on your machine:
 
@@ -263,13 +265,11 @@ HTTP 200, and hand back a description that stops mid-sentence.
 
 ### Caveats when using agent CLIs
 
-`claude`, `copilot`, `agy`, `opencode`, `pi` and `omp` are coding agents rather than
-plain completion APIs. The tool runs them from an empty scratch directory with stdin closed,
-so they cannot pick up the current repo's `AGENTS.md`/`CLAUDE.md` or swallow the confirmation
-prompt. They **do** still honour your *user-global* instructions (`~/.claude/CLAUDE.md`,
-…) — that is your own configuration, so the tool leaves it alone. If your global instructions
-tell the agent to prefix every reply with a marker, that marker will show up in generated
-descriptions.
+`claude`, `copilot`, `pi` and `omp` are coding agents rather than plain completion APIs.
+Their adapters explicitly disable tools, close stdin, and run from an empty scratch directory,
+so an untrusted diff cannot ask them to inspect the local machine, pick up the current repo's
+`AGENTS.md`/`CLAUDE.md`, or swallow the confirmation prompt. Agent CLIs without a supported
+no-tools mode are not offered as backends.
 
 ### Newer OpenAI model compatibility
 
@@ -322,7 +322,6 @@ export PR_SUMMARISE_CONVENTIONAL=1
 | `Response was truncated (finish_reason=length)` | A reasoning model spent its whole output budget on hidden tokens. Pick a non-reasoning model with `--model`. |
 | `rate limit` / HTTP 429 on `openrouter` | You hit 50 requests/day or 20/minute. Check the remaining quota with the `curl .../api/v1/key` command above, or add backends to `PR_SUMMARISE_BACKENDS` so it falls through. |
 | `already has a human-written description` | Working as intended — the tool will not overwrite prose it did not write. Use `--force`. |
-| Descriptions start with a stray emoji or marker | Your *user-global* agent instructions (for example `~/.claude/CLAUDE.md`) are being applied. See [Caveats when using agent CLIs](#caveats-when-using-agent-clis). |
 | Summary only covers part of a large PR | The diff was truncated to the backend's budget. Raise `--max-diff-chars`, or switch off `apfel`, which caps at 8 000 characters. |
 
 ## Update

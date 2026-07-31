@@ -20,7 +20,7 @@ MODEL="${PR_SUMMARISE_MODEL:-}"
 MAX_DIFF_CHARS="${PR_SUMMARISE_MAX_DIFF_CHARS:-28000}"
 
 # Every backend this script knows how to drive.
-KNOWN_BACKENDS="claude copilot openrouter openai pi omp agy opencode llm apfel"
+KNOWN_BACKENDS="claude copilot openrouter openai pi omp llm apfel"
 
 # Backend pinned explicitly by the user (--backend / PR_SUMMARISE_BACKEND).
 BACKEND="${PR_SUMMARISE_BACKEND:-}"
@@ -347,7 +347,8 @@ backend_claude_available() { command -v claude >/dev/null 2>&1; }
 backend_claude_model()     { echo "haiku"; }
 backend_claude_budget()    { echo 28000; }
 backend_claude_generate() {
-  (cd "$AGENT_CWD" && claude -p --model "$(resolve_model claude)" "$1
+  (cd "$AGENT_CWD" && claude -p --safe-mode --tools "" --no-session-persistence \
+    --model "$(resolve_model claude)" "$1
 
 $2") 2>/dev/null </dev/null
 }
@@ -358,7 +359,8 @@ backend_copilot_budget()    { echo 28000; }
 backend_copilot_generate() {
   local args=(-p "$1
 
-$2" --no-color --log-level none)
+$2" --no-color --log-level none --available-tools= --disable-builtin-mcps
+    --no-custom-instructions --no-remote --no-remote-export)
   local model
   model="$(resolve_model copilot)"
   [[ -n "$model" ]] && args+=(--model "$model")
@@ -385,32 +387,6 @@ backend_omp_generate() {
   model="$(resolve_model omp)"
   [[ -n "$model" ]] && args+=(--model "$model")
   (cd "$AGENT_CWD" && omp "${args[@]}" "$2") 2>/dev/null </dev/null
-}
-
-backend_agy_available() { command -v agy >/dev/null 2>&1; }
-backend_agy_model()     { echo ""; }
-backend_agy_budget()    { echo 28000; }
-backend_agy_generate() {
-  local args=(--print)
-  local model
-  model="$(resolve_model agy)"
-  [[ -n "$model" ]] && args+=(--model "$model")
-  (cd "$AGENT_CWD" && agy "${args[@]}" "$1
-
-$2") 2>/dev/null </dev/null
-}
-
-backend_opencode_available() { command -v opencode >/dev/null 2>&1; }
-backend_opencode_model()     { echo ""; }
-backend_opencode_budget()    { echo 28000; }
-backend_opencode_generate() {
-  local args=(run --pure)
-  local model
-  model="$(resolve_model opencode)"
-  [[ -n "$model" ]] && args+=(-m "$model")
-  (cd "$AGENT_CWD" && opencode "${args[@]}" "$1
-
-$2") 2>/dev/null </dev/null
 }
 
 backend_llm_available() { command -v llm >/dev/null 2>&1; }

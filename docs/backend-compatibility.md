@@ -5,6 +5,8 @@ using `bash scripts/backend-matrix.sh` with the default `--max-diff-chars 28000`
 
 Tested on: 2026-07-31
 
+Agent CLIs are included only when their adapters can explicitly disable all model tools.
+
 Timings come from a single run on one machine and vary a lot between runs — treat them as
 orders of magnitude, not benchmarks. The same OpenRouter model was measured at 10s and 37s
 on identical input.
@@ -19,8 +21,6 @@ on identical input.
 | `openai` | ✅ | — | Generic OpenAI-compatible backend. Verified separately by pointing `PR_SUMMARISE_ENDPOINT` at OpenRouter; unavailable in the matrix run because no endpoint was configured. |
 | `pi` | ✅ | 7s | |
 | `omp` | ✅ | 10s | Rejects `--no-context-files` despite being pi-family. |
-| `agy` | ✅ | 10s | |
-| `opencode` | ❌ no output | 4s | `Token refresh failed: 401` — the CLI's own auth had expired on the test machine. Re-authenticate opencode and retry; the adapter itself is untested. |
 | `llm` | ✅ | 6s | Uses whatever default model `llm` is configured with. |
 | `apfel` | ✅ | 4s | Free and offline. Diff clamped to 8 000 chars — see below. |
 
@@ -30,7 +30,7 @@ Speed and success are not the same as usefulness. On the test PR — whose diff 
 independent changes (README env-var docs **and** a `--draw-me-a-rocket` easter egg) — the
 backends differ in how much they actually report:
 
-- `copilot`, `claude`, `pi`, `agy`, `omp`, `llm` and `openrouter` all named both
+- `copilot`, `claude`, `pi`, `omp`, `llm` and `openrouter` all named both
   changes.
 - `apfel` named only the README change and missed the easter egg entirely, and it tends to
   skip the requested summary paragraph. It is a reasonable fast local draft, not a

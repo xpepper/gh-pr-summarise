@@ -84,18 +84,24 @@ teardown() {
   [[ "$output" == *"--help"* ]]
 }
 
-@test "codex is rejected because it cannot be run without tools" {
+@test "agent backends without a no-tools mode are rejected without execution" {
   setup_mock_gh ""
 
-  cat > "$_MOCK_DIR/codex" <<'MOCK'
+  local backend marker
+  for backend in codex agy opencode; do
+    marker="$_MOCK_DIR/${backend}_called"
+    cat > "$_MOCK_DIR/$backend" <<EOF
 #!/usr/bin/env bash
-echo "unsafe codex summary"
-MOCK
-  chmod +x "$_MOCK_DIR/codex"
+touch "$marker"
+echo "unsafe summary"
+EOF
+    chmod +x "$_MOCK_DIR/$backend"
 
-  run bash -c "PR_SUMMARISE_BACKEND=codex bash '$SCRIPT' 123"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"unknown backend: codex"* ]]
+    run bash -c "PR_SUMMARISE_BACKEND=$backend bash '$SCRIPT' 123"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"unknown backend: $backend"* ]]
+    [ ! -e "$marker" ]
+  done
 }
 
 @test "--max-diff-chars with a non-integer exits 1" {
@@ -599,6 +605,51 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"SENTINEL custom instructions."* ]]
   [[ "$output" == *"diff --git a/foo b/foo"* ]]
+}
+
+@test "Claude runs with all tools disabled" {
+  setup_mock_gh ""
+
+  cat > "$_MOCK_DIR/claude" <<'MOCK'
+#!/usr/bin/env bash
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "--tools" && $# -gt 1 && -z "$2" ]]; then
+    echo "safe claude summary"
+    exit 0
+  fi
+  shift
+done
+exit 1
+MOCK
+  chmod +x "$_MOCK_DIR/claude"
+
+  run bash -c "echo n | PR_SUMMARISE_BACKEND=claude bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"safe claude summary"* ]]
+}
+
+@test "Copilot runs with an empty tool allowlist and no built-in MCP servers" {
+  setup_mock_gh ""
+
+  cat > "$_MOCK_DIR/copilot" <<'MOCK'
+#!/usr/bin/env bash
+has_empty_allowlist=false
+has_no_mcp=false
+for arg in "$@"; do
+  [[ "$arg" == "--available-tools=" ]] && has_empty_allowlist=true
+  [[ "$arg" == "--disable-builtin-mcps" ]] && has_no_mcp=true
+done
+if [[ "$has_empty_allowlist" == true && "$has_no_mcp" == true ]]; then
+  echo "safe copilot summary"
+  exit 0
+fi
+exit 1
+MOCK
+  chmod +x "$_MOCK_DIR/copilot"
+
+  run bash -c "echo n | PR_SUMMARISE_BACKEND=copilot bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"safe copilot summary"* ]]
 }
 
 @test "--title adds an uppercased [CARD-ID] prefix parsed from the branch" {
