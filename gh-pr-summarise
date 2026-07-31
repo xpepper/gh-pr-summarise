@@ -19,6 +19,11 @@ VERSION="0.2.0"
 MODEL="${PR_SUMMARISE_MODEL:-}"
 MAX_DIFF_CHARS="${PR_SUMMARISE_MAX_DIFF_CHARS:-28000}"
 
+# Wall-clock budget for a single backend attempt, in seconds (0 disables it).
+# A CLI that blocks on interactive auth or a stalled request would otherwise
+# pin the run forever and the rest of the fallback chain would never be tried.
+BACKEND_TIMEOUT="${PR_SUMMARISE_TIMEOUT:-300}"
+
 # Every backend this script knows how to drive.
 KNOWN_BACKENDS="claude copilot openrouter openai pi omp llm apfel"
 
@@ -492,6 +497,58 @@ resolve_backend_chain() {
   fi
 }
 
+# Best-effort TERM of a process and its descendants. The CLI usually sits a
+# subshell or two below the job we started, and only pgrep can find it — where
+# pgrep is missing we still kill the job itself, which is enough to move on.
+kill_tree() {
+  local pid="$1" child
+  if command -v pgrep >/dev/null 2>&1; then
+    for child in $(pgrep -P "$pid" 2>/dev/null); do
+      kill_tree "$child"
+    done
+  fi
+  kill -TERM "$pid" 2>/dev/null || true
+}
+
+# Runs a command under a wall-clock deadline, capturing its stdout in a file.
+#   $1 = output file, $2 = seconds (0 disables), $3.. = command and arguments
+# Returns 124 on expiry, like timeout(1) — which a stock macOS does not ship,
+# hence the hand-rolled watchdog.
+#
+# The output goes to a file rather than through $(...) on purpose: a killed CLI
+# can leave a grandchild holding the write end of a pipe, and command
+# substitution would then wait on that pipe forever — the very stall this
+# guards against.
+run_with_deadline() {
+  local out="$1" secs="$2"
+  shift 2
+  local pid watchdog status=0
+
+  if [[ "$secs" -le 0 ]]; then
+    "$@" > "$out" || status=$?
+    return "$status"
+  fi
+
+  "$@" > "$out" &
+  pid=$!
+  # The watchdog gets its own stdio: anything reading ours (a pipe, a caller
+  # capturing output) would otherwise block until the watchdog's sleep expires,
+  # turning the guard into the stall.
+  ( sleep "$secs"; kill_tree "$pid" ) >/dev/null 2>&1 &
+  watchdog=$!
+
+  wait "$pid" || status=$?
+  if kill -0 "$watchdog" 2>/dev/null; then
+    # kill_tree, not kill: the watchdog's sleep would outlive its parent.
+    kill_tree "$watchdog"
+    wait "$watchdog" 2>/dev/null || true
+  else
+    # The watchdog is gone, so it fired: the command did not finish in time.
+    status=124
+  fi
+  return "$status"
+}
+
 # Generates content by trying each active backend in order.
 #
 # Sets GENERATED_CONTENT and ACTIVE_BACKEND on success. Deliberately does NOT
@@ -502,7 +559,7 @@ resolve_backend_chain() {
 #   $2 = prompt text
 generate_content() {
   local label="$1" prompt="$2"
-  local backend budget diff content
+  local backend budget diff content attempt_out status
 
   GENERATED_CONTENT=""
   for backend in "${ACTIVE_BACKENDS[@]}"; do
@@ -514,12 +571,23 @@ generate_content() {
       echo "Note: $backend ignores --model; using its built-in model." >&2
     fi
     echo "Generating $label via $(describe_backend "$backend")..." >&2
-    if content=$("backend_${backend}_generate" "$prompt" "$diff") && [[ -n "$content" ]]; then
+    attempt_out="$(mktemp)"
+    status=0
+    run_with_deadline "$attempt_out" "$BACKEND_TIMEOUT" \
+      "backend_${backend}_generate" "$prompt" "$diff" || status=$?
+    content="$(cat "$attempt_out")"
+    rm -f "$attempt_out"
+
+    if [[ "$status" -eq 0 && -n "$content" ]]; then
       GENERATED_CONTENT="$content"
       ACTIVE_BACKEND="$backend"
       return 0
     fi
-    echo "Backend $backend produced no $label." >&2
+    if [[ "$status" -eq 124 ]]; then
+      echo "Backend $backend timed out after ${BACKEND_TIMEOUT}s." >&2
+    else
+      echo "Backend $backend produced no $label." >&2
+    fi
   done
 
   echo "Error: no backend could generate a $label." >&2

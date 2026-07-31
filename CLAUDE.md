@@ -74,6 +74,12 @@ machine, so the suite would make live API calls and behave differently in CI.
 - **Backend chain, not model chain** — on failure the tool tries the next backend in
   `PR_SUMMARISE_BACKENDS` (default `claude,copilot,openrouter`). A backend pinned with
   `--backend` is never silently swapped.
+- **Bounded backend attempts** — every attempt runs under `PR_SUMMARISE_TIMEOUT`
+  (default 300s, `0` disables) via the hand-rolled `run_with_deadline`, because a stock
+  macOS ships no `timeout(1)`. Two things there are load-bearing: output is captured
+  through a temp file, not `$(...)` (a killed CLI can leave a grandchild holding the pipe
+  open forever), and both the job and the watchdog are killed with `kill_tree` (a bare
+  `kill` orphans their `sleep`, which keeps inherited stdio open).
 - **Per-backend diff budget** — `min(MAX_DIFF_CHARS, backend_budget)` applied up front,
   rather than retrying on overflow. `apfel` is 8000, everything else 28000.
 - **Truncation is a failure** — `finish_reason: length` makes the HTTP backend fail so the

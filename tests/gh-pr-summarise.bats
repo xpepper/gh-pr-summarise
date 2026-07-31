@@ -702,6 +702,33 @@ MOCK
   [[ "$output" != *"apfel: gpt-5"* ]]
 }
 
+@test "a backend that hangs is abandoned so the next one still runs" {
+  setup_mock_gh ""
+  unset PR_SUMMARISE_BACKEND
+
+  printf '#!/usr/bin/env bash\nsleep 30\n' > "$_MOCK_DIR/omp"
+  chmod +x "$_MOCK_DIR/omp"
+  printf '#!/usr/bin/env bash\necho "rescued by llm"\n' > "$_MOCK_DIR/llm"
+  chmod +x "$_MOCK_DIR/llm"
+
+  run bash -c "echo n | PR_SUMMARISE_BACKENDS=omp,llm PR_SUMMARISE_TIMEOUT=1 bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"timed out"* ]]
+  [[ "$output" == *"rescued by llm"* ]]
+}
+
+@test "a timeout of 0 disables the per-attempt deadline" {
+  setup_mock_gh ""
+  unset PR_SUMMARISE_BACKEND
+
+  printf '#!/usr/bin/env bash\nsleep 1\necho "slow but fine"\n' > "$_MOCK_DIR/llm"
+  chmod +x "$_MOCK_DIR/llm"
+
+  run bash -c "echo n | PR_SUMMARISE_BACKENDS=llm PR_SUMMARISE_TIMEOUT=0 bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"slow but fine"* ]]
+}
+
 @test "--title adds an uppercased [CARD-ID] prefix parsed from the branch" {
   setup_mock_gh_title "" "intop-123-add-export-endpoint" "add export endpoint"
   run bash -c "echo n | $SCRIPT --title 123"

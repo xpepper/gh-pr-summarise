@@ -302,6 +302,10 @@ export PR_SUMMARISE_MODEL="openai/gpt-oss-20b:free"
 # Diff truncation limit (equivalent to --max-diff-chars)
 export PR_SUMMARISE_MAX_DIFF_CHARS=28000
 
+# Seconds a single backend attempt may take before the next backend is tried.
+# Set to 0 to wait indefinitely.
+export PR_SUMMARISE_TIMEOUT=300
+
 # Custom system prompt loaded from a file (overridden by --prompt-file)
 export PR_SUMMARISE_PROMPT_FILE="/path/to/my-prompt.txt"
 
@@ -321,6 +325,7 @@ export PR_SUMMARISE_CONVENTIONAL=1
 | `no backend could generate a summary` | Every backend ran but returned nothing — usually expired CLI auth. Re-authenticate the CLI, or drop `2>/dev/null` from the relevant `backend_*_generate` function to see its real error. |
 | `Response was truncated (finish_reason=length)` | A reasoning model spent its whole output budget on hidden tokens. Pick a non-reasoning model with `--model`. |
 | `rate limit` / HTTP 429 on `openrouter` | You hit 50 requests/day or 20/minute. Check the remaining quota with the `curl .../api/v1/key` command above, or add backends to `PR_SUMMARISE_BACKENDS` so it falls through. |
+| `Backend x timed out after 300s` | The CLI blocked — usually an interactive auth prompt it cannot show, or a stalled request. The chain moves on to the next backend; run the CLI by hand to re-authenticate, or raise `PR_SUMMARISE_TIMEOUT`. |
 | `already has a human-written description` | Working as intended — the tool will not overwrite prose it did not write. Use `--force`. |
 | Summary only covers part of a large PR | The diff was truncated to the backend's budget. Raise `--max-diff-chars`, or switch off `apfel`, which caps at 8 000 characters. |
 
