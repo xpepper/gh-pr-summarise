@@ -50,6 +50,15 @@ Known backends: claude copilot openrouter"
   [ "$output" = "unknown backend name" ]
 }
 
+@test "generated text mentioning an unknown backend is still success" {
+  run_backend_matrix_function classify "Generating summary via claude: haiku...
+──── Generated description (claude: haiku) ────
+Document the unknown backend behavior."
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "✅" ]
+}
+
 @test "a backend that ran but returned nothing is reported as no output" {
   run_backend_matrix_function classify "Generating summary via opencode...
 Backend opencode produced no summary.
