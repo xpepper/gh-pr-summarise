@@ -454,6 +454,18 @@ resolve_model() {
   fi
 }
 
+# Human-readable "backend" or "backend: model". Backends that let their own CLI
+# pick the model have no model id to show.
+describe_backend() {
+  local model
+  model="$(resolve_model "$1")"
+  if [[ -n "$model" ]]; then
+    echo "$1: $model"
+  else
+    echo "$1"
+  fi
+}
+
 # Builds the ordered list of backends to try. A pinned backend is used on its
 # own — silently falling through to a different provider would be surprising
 # when the user named one explicitly.
@@ -507,7 +519,7 @@ generate_content() {
     [[ "$MAX_DIFF_CHARS" -lt "$budget" ]] && budget="$MAX_DIFF_CHARS"
     diff="${FULL_DIFF:0:$budget}"
 
-    echo "Generating $label via $backend ($(resolve_model "$backend"))..." >&2
+    echo "Generating $label via $(describe_backend "$backend")..." >&2
     if content=$("backend_${backend}_generate" "$prompt" "$diff") && [[ -n "$content" ]]; then
       GENERATED_CONTENT="$content"
       ACTIVE_BACKEND="$backend"
@@ -569,7 +581,7 @@ fi
 # ── Review and confirm ────────────────────────────────────────────────────────
 echo ""
 [[ -n "$TITLE" ]] && echo "Suggested title: $TITLE"
-echo "──── Generated description ($ACTIVE_BACKEND: $(resolve_model "$ACTIVE_BACKEND")) ────"
+echo "──── Generated description ($(describe_backend "$ACTIVE_BACKEND")) ────"
 echo "$FINAL_BODY"
 echo "───────────────────────────────────────────────────────────────────────────"
 echo ""

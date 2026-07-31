@@ -675,3 +675,17 @@ EOF
   [[ "$output" == *"the description"* ]]
   [[ "$output" != *"Suggested title:"* ]]
 }
+
+@test "banner omits the colon for backends that carry no model id" {
+  setup_mock_gh ""
+  cat > "$_MOCK_DIR/copilot" <<'MOCK'
+#!/usr/bin/env bash
+echo "summary from copilot"
+MOCK
+  chmod +x "$_MOCK_DIR/copilot"
+
+  run bash -c "echo n | PR_SUMMARISE_BACKEND=copilot bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Generated description (copilot)"* ]]
+  [[ "$output" != *"copilot: )"* ]]
+}
