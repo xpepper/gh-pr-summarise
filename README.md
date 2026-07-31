@@ -9,11 +9,59 @@ or any OpenAI-compatible endpoint.
 > it with pluggable backends. `PR_SUMMARISE_FALLBACK_MODELS` is gone — see
 > [Backends](#backends).
 
+## Requirements
+
+- [`gh`](https://cli.github.com) — GitHub CLI, authenticated via `gh auth login`
+- `jq` — JSON processor ([jqlang.org](https://jqlang.org))
+- `curl` — HTTP client (standard on macOS and Linux); only needed by the HTTP backends
+- At least one [backend](#backends)
+
 ## Install
 
 ```bash
 gh extension install xpepper/gh-pr-summarise
 ```
+
+## Quick start
+
+The tool needs one **backend** — the thing that actually writes the text. There is no
+built-in provider, so this is the one setup step.
+
+**If you already use `claude`, `copilot` or `codex`,** you are done. They are auto-detected.
+From a branch with an open PR:
+
+```bash
+gh pr-summarise
+```
+
+**Otherwise, the fastest zero-cost route is OpenRouter's free tier:**
+
+```bash
+# 1. Create a key at https://openrouter.ai/keys, then export it.
+#    Add this to ~/.zshrc (or ~/.bashrc) to make it permanent.
+export OPENROUTER_API_KEY="sk-or-v1-..."
+
+# 2. Check the key works and see your remaining quota.
+curl -sS https://openrouter.ai/api/v1/key \
+  -H "Authorization: Bearer $OPENROUTER_API_KEY" | jq '.data'
+
+# 3. Try it against the permanent test PR. Answering "n" applies nothing,
+#    so this is safe to run as many times as you like.
+echo n | gh pr-summarise --backend openrouter \
+  https://github.com/xpepper/gh-pr-summarise/pull/1
+
+# 4. Happy with it? Make OpenRouter the default for every run.
+export PR_SUMMARISE_BACKENDS="openrouter,claude,copilot"
+```
+
+Then, from any repo with an open PR:
+
+```bash
+gh pr-summarise
+```
+
+See [Using OpenRouter's free tier](#using-openrouters-free-tier) for the rate limits and
+how to pick a different free model.
 
 ## Usage
 
@@ -48,6 +96,32 @@ gh pr-summarise --title
 # Generate a Conventional Commit title, e.g. "[INTOP-123] feat: add export endpoint"
 gh pr-summarise --conventional
 ```
+
+### What a run looks like
+
+```
+$ gh pr-summarise --title 42
+Fetching diff for PR #42...
+Generating summary via openrouter: openai/gpt-oss-20b:free...
+Generating title via openrouter: openai/gpt-oss-20b:free...
+
+Suggested title: [INTOP-123] feat: add user export endpoint
+──── Generated description (openrouter: openai/gpt-oss-20b:free) ────
+Adds a CSV export endpoint for user records, behind the existing admin scope.
+
+## Changes
+- Add `GET /admin/users/export` returning a streamed CSV.
+- ...
+
+<!-- pr-summarise -->
+───────────────────────────────────────────────────────────────────────────
+
+Apply this description to PR #42? [y/N]
+```
+
+Nothing is written to the PR until you answer `y`. The banner names the backend that
+actually produced the text, which matters when the first one failed and the tool fell
+through to the next.
 
 ## Options
 
@@ -117,6 +191,56 @@ error.
 | `llm` | [`llm`](https://llm.datasette.io) | provider API key | The broadest escape hatch: hundreds of models via plugins, including local ones via `llm-ollama`. |
 | `apfel` | [`apfel`](https://apfel.franzai.com/) | **free, offline** | Apple's on-device model. macOS 26+ on Apple Silicon. See the caveat below. |
 
+### Setting up each backend
+
+| Backend | Setup |
+|---|---|
+| `claude` | `brew install --cask claude-code`, then `claude` once to sign in. |
+| `copilot` | Install the [Copilot CLI](https://github.com/github/copilot-cli) and sign in. Needs a Copilot subscription. |
+| `openrouter` | Create a key at [openrouter.ai/keys](https://openrouter.ai/keys) and `export OPENROUTER_API_KEY=...`. |
+| `openai` | `export PR_SUMMARISE_ENDPOINT=...` and, if the endpoint needs one, `PR_SUMMARISE_API_KEY`. |
+| `codex` | Install the [Codex CLI](https://github.com/openai/codex) and sign in. |
+| `llm` | `uv tool install llm` (or `pipx install llm`), then `llm keys set openai` — or `llm install llm-ollama` for local models. |
+| `apfel` | `brew install apfel`. macOS 26+ on Apple Silicon, with Apple Intelligence enabled. |
+| `pi` / `omp` / `agy` / `opencode` | Install the CLI and authenticate it however that tool expects. |
+
+To see which are actually working on your machine:
+
+```bash
+bash scripts/backend-matrix.sh
+```
+
+### Using OpenRouter's free tier
+
+Models whose id ends in `:free` cost nothing. The limits are **50 requests/day** without
+any purchase, **1 000/day** once you have bought at least $10 in credits, and **20
+requests/minute** either way.
+
+Note that `--title` makes a *second* request per run, so with titles enabled a 50/day
+allowance is about 25 runs.
+
+List the free models currently on offer, largest context first:
+
+```bash
+curl -sS https://openrouter.ai/api/v1/models \
+  | jq -r '.data[] | select(.id|endswith(":free")) | "\(.context_length)\t\(.id)"' \
+  | sort -rn
+```
+
+Pick one with `--model`:
+
+```bash
+gh pr-summarise --backend openrouter --model "nvidia/nemotron-3-nano-30b-a3b:free"
+```
+
+Two things worth knowing before you go hunting for a "better" free model:
+
+- **Not every `:free` model actually serves requests.** `google/gemma-4-31b-it:free`
+  returns `"Provider returned error"`. The default, `openai/gpt-oss-20b:free`, is the one
+  this project tests against.
+- **Latency swings widely** — the same model on identical input has been measured at 10s
+  and 37s. A slow run is not a hang.
+
 ### Choosing a backend
 
 `claude`, `copilot` and `openrouter` all produce good descriptions. Pick on cost: `openrouter`
@@ -174,6 +298,12 @@ export OPENROUTER_API_KEY="sk-or-v1-..."
 export PR_SUMMARISE_ENDPOINT="http://localhost:11434/v1/chat/completions"
 export PR_SUMMARISE_API_KEY="..."
 
+# Model to use (equivalent to --model). Meaning depends on the active backend.
+export PR_SUMMARISE_MODEL="openai/gpt-oss-20b:free"
+
+# Diff truncation limit (equivalent to --max-diff-chars)
+export PR_SUMMARISE_MAX_DIFF_CHARS=28000
+
 # Custom system prompt loaded from a file (overridden by --prompt-file)
 export PR_SUMMARISE_PROMPT_FILE="/path/to/my-prompt.txt"
 
@@ -184,12 +314,18 @@ export PR_SUMMARISE_TITLE=1
 export PR_SUMMARISE_CONVENTIONAL=1
 ```
 
-## Requirements
+## Troubleshooting
 
-- [`gh`](https://cli.github.com) — GitHub CLI, authenticated via `gh auth login`
-- `jq` — JSON processor ([jqlang.org](https://jqlang.org))
-- `curl` — HTTP client (standard on macOS and Linux); only needed by the HTTP backends
-- At least one [backend](#backends)
+| Message | Cause and fix |
+|---|---|
+| `no usable backend found` | Nothing in the chain is installed or configured. Run `gh pr-summarise --help` for the backend list, then see [Setting up each backend](#setting-up-each-backend). |
+| `Backend 'x' is not available` | You pinned a backend with `--backend` that is not installed or whose API key is unset. A pinned backend is never silently swapped for another. |
+| `no backend could generate a summary` | Every backend ran but returned nothing — usually expired CLI auth. Re-authenticate the CLI, or drop `2>/dev/null` from the relevant `backend_*_generate` function to see its real error. |
+| `Response was truncated (finish_reason=length)` | A reasoning model spent its whole output budget on hidden tokens. Pick a non-reasoning model with `--model`. |
+| `rate limit` / HTTP 429 on `openrouter` | You hit 50 requests/day or 20/minute. Check the remaining quota with the `curl .../api/v1/key` command above, or add backends to `PR_SUMMARISE_BACKENDS` so it falls through. |
+| `already has a human-written description` | Working as intended — the tool will not overwrite prose it did not write. Use `--force`. |
+| Descriptions start with a stray emoji or marker | Your *user-global* agent instructions (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`) are being applied. See [Caveats when using agent CLIs](#caveats-when-using-agent-clis). |
+| Summary only covers part of a large PR | The diff was truncated to the backend's budget. Raise `--max-diff-chars`, or switch off `apfel`, which caps at 8 000 characters. |
 
 ## Update
 
