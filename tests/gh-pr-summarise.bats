@@ -689,3 +689,43 @@ MOCK
   [[ "$output" == *"Generated description (copilot)"* ]]
   [[ "$output" != *"copilot: )"* ]]
 }
+
+# The confirmation prompt reads from stdin, so a backend CLI that also reads
+# stdin would swallow the user's answer and the apply would silently abort.
+@test "CLI backends do not consume the stdin used for the confirmation prompt" {
+  setup_mock_gh_title "" "main" "unused"
+
+  cat > "$_MOCK_DIR/claude" <<'MOCK'
+#!/usr/bin/env bash
+cat > /dev/null   # a backend that drains stdin, like `codex exec` does
+echo "summary from claude"
+MOCK
+  chmod +x "$_MOCK_DIR/claude"
+
+  run bash -c "echo y | PR_SUMMARISE_BACKEND=claude bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"EDIT_ARGS:"* ]]
+  [[ "$output" != *"Aborted"* ]]
+}
+
+# Agent CLIs auto-load AGENTS.md / CLAUDE.md from their working directory. Run
+# from the repo root they obey this project's instructions instead of ours —
+# the live codex run came back prefixed with the repo's context-marker emoji.
+@test "agent CLI backends run outside the repo so project instructions cannot leak" {
+  setup_mock_gh ""
+
+  cat > "$_MOCK_DIR/claude" <<'MOCK'
+#!/usr/bin/env bash
+if [[ -e AGENTS.md || -e CLAUDE.md ]]; then
+  echo "LEAKED_REPO_CONTEXT"
+else
+  echo "clean summary"
+fi
+MOCK
+  chmod +x "$_MOCK_DIR/claude"
+
+  run bash -c "echo n | PR_SUMMARISE_BACKEND=claude bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"clean summary"* ]]
+  [[ "$output" != *"LEAKED_REPO_CONTEXT"* ]]
+}

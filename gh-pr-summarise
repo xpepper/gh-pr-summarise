@@ -331,14 +331,25 @@ backend_openai_generate() {
 # ── CLI backends ──────────────────────────────────────────────────────────────
 # All of these take the prompt and diff as one blob and print the answer on
 # stdout; their own banners and telemetry go to stderr, which we discard.
+#
+# Two rules every CLI backend follows:
+#
+#   </dev/null  - the y/N confirmation prompt reads stdin, and CLIs like
+#                 `codex exec` will happily swallow the answer otherwise.
+#   AGENT_CWD   - agent CLIs auto-load AGENTS.md / CLAUDE.md from the working
+#                 directory. Run from the repo root they follow *this* project's
+#                 instructions rather than the summarisation prompt, so they run
+#                 from an empty scratch directory instead.
+AGENT_CWD="$(mktemp -d)"
+trap 'rm -rf "$AGENT_CWD"' EXIT
 
 backend_claude_available() { command -v claude >/dev/null 2>&1; }
 backend_claude_model()     { echo "haiku"; }
 backend_claude_budget()    { echo 28000; }
 backend_claude_generate() {
-  claude -p --model "$(resolve_model claude)" "$1
+  (cd "$AGENT_CWD" && claude -p --model "$(resolve_model claude)" "$1
 
-$2" 2>/dev/null
+$2") 2>/dev/null </dev/null
 }
 
 backend_copilot_available() { command -v copilot >/dev/null 2>&1; }
@@ -351,7 +362,7 @@ $2" --no-color --log-level none)
   local model
   model="$(resolve_model copilot)"
   [[ -n "$model" ]] && args+=(--model "$model")
-  copilot "${args[@]}" 2>/dev/null
+  (cd "$AGENT_CWD" && copilot "${args[@]}") 2>/dev/null </dev/null
 }
 
 backend_pi_available() { command -v pi >/dev/null 2>&1; }
@@ -362,31 +373,33 @@ backend_pi_generate() {
   local model
   model="$(resolve_model pi)"
   [[ -n "$model" ]] && args+=(--model "$model")
-  pi "${args[@]}" "$2" 2>/dev/null
+  (cd "$AGENT_CWD" && pi "${args[@]}" "$2") 2>/dev/null </dev/null
 }
 
 backend_omp_available() { command -v omp >/dev/null 2>&1; }
 backend_omp_model()     { echo ""; }
 backend_omp_budget()    { echo 28000; }
 backend_omp_generate() {
-  local args=(-p --no-tools --no-session --no-context-files --system-prompt "$1")
+  local args=(-p --no-tools --no-session --system-prompt "$1")
   local model
   model="$(resolve_model omp)"
   [[ -n "$model" ]] && args+=(--model "$model")
-  omp "${args[@]}" "$2" 2>/dev/null
+  (cd "$AGENT_CWD" && omp "${args[@]}" "$2") 2>/dev/null </dev/null
 }
 
 backend_codex_available() { command -v codex >/dev/null 2>&1; }
 backend_codex_model()     { echo ""; }
 backend_codex_budget()    { echo 28000; }
 backend_codex_generate() {
-  local args=(exec)
+  # --skip-git-repo-check: the PR diff is self-contained, so codex does not
+  # need to be in a trusted repo to summarise it.
+  local args=(exec --skip-git-repo-check)
   local model
   model="$(resolve_model codex)"
   [[ -n "$model" ]] && args+=(-c "model=\"$model\"")
-  codex "${args[@]}" "$1
+  (cd "$AGENT_CWD" && codex "${args[@]}" "$1
 
-$2" 2>/dev/null
+$2") 2>/dev/null </dev/null
 }
 
 backend_agy_available() { command -v agy >/dev/null 2>&1; }
@@ -397,9 +410,9 @@ backend_agy_generate() {
   local model
   model="$(resolve_model agy)"
   [[ -n "$model" ]] && args+=(--model "$model")
-  agy "${args[@]}" "$1
+  (cd "$AGENT_CWD" && agy "${args[@]}" "$1
 
-$2" 2>/dev/null
+$2") 2>/dev/null </dev/null
 }
 
 backend_opencode_available() { command -v opencode >/dev/null 2>&1; }
@@ -410,9 +423,9 @@ backend_opencode_generate() {
   local model
   model="$(resolve_model opencode)"
   [[ -n "$model" ]] && args+=(-m "$model")
-  opencode "${args[@]}" "$1
+  (cd "$AGENT_CWD" && opencode "${args[@]}" "$1
 
-$2" 2>/dev/null
+$2") 2>/dev/null </dev/null
 }
 
 backend_llm_available() { command -v llm >/dev/null 2>&1; }
@@ -436,7 +449,7 @@ backend_apfel_generate() {
   diff_file="$(mktemp)"
   printf '%s' "$2" > "$diff_file"
   apfel -q --temperature 0.2 --max-tokens 500 -s "$1" \
-    -f "$diff_file" "Write the response for the attached diff." 2>/dev/null
+    -f "$diff_file" "Write the response for the attached diff." 2>/dev/null </dev/null
   status=$?
   rm -f "$diff_file"
   return $status
