@@ -18,7 +18,6 @@ on identical input.
 | `openrouter` | ✅ | 24s | Free tier. Defaults to `openai/gpt-oss-20b:free`. |
 | `openai` | ✅ | — | Generic OpenAI-compatible backend. Verified separately by pointing `PR_SUMMARISE_ENDPOINT` at OpenRouter; unavailable in the matrix run because no endpoint was configured. |
 | `pi` | ✅ | 7s | |
-| `codex` | ✅ | 12s | Needs `--skip-git-repo-check`, which the tool passes automatically. |
 | `omp` | ✅ | 10s | Rejects `--no-context-files` despite being pi-family. |
 | `agy` | ✅ | 10s | |
 | `opencode` | ❌ no output | 4s | `Token refresh failed: 401` — the CLI's own auth had expired on the test machine. Re-authenticate opencode and retry; the adapter itself is untested. |
@@ -31,7 +30,7 @@ Speed and success are not the same as usefulness. On the test PR — whose diff 
 independent changes (README env-var docs **and** a `--draw-me-a-rocket` easter egg) — the
 backends differ in how much they actually report:
 
-- `copilot`, `claude`, `pi`, `codex`, `agy`, `omp`, `llm` and `openrouter` all named both
+- `copilot`, `claude`, `pi`, `agy`, `omp`, `llm` and `openrouter` all named both
   changes.
 - `apfel` named only the README change and missed the easter egg entirely, and it tends to
   skip the requested summary paragraph. It is a reasonable fast local draft, not a

@@ -66,10 +66,10 @@ machine, so the suite would make live API calls and behave differently in CI.
   Dispatch is by convention (`"backend_${name}_generate"`), so adding a backend means
   adding four functions and one entry in `KNOWN_BACKENDS`.
 - **CLI backends are isolated** — every CLI backend runs with `</dev/null` and from an
-  empty scratch dir (`$AGENT_CWD`). Both are load-bearing: `codex exec` reads stdin and
-  would swallow the y/N confirmation answer, and agent CLIs auto-load `AGENTS.md` from the
-  cwd and would follow *this repo's* instructions instead of the summarisation prompt.
-  User-global agent instructions are deliberately left alone.
+  empty scratch dir (`$AGENT_CWD`). Both are load-bearing: agent CLIs may read stdin and
+  swallow the y/N confirmation answer, and they auto-load instruction files from the cwd
+  and would follow *this repo's* instructions instead of the summarisation prompt. User-global
+  agent instructions are deliberately left alone.
 - **Backend chain, not model chain** — on failure the tool tries the next backend in
   `PR_SUMMARISE_BACKENDS` (default `claude,copilot,openrouter`). A backend pinned with
   `--backend` is never silently swapped.
@@ -101,4 +101,3 @@ machine, so the suite would make live API calls and behave differently in CI.
 | Human-written content        | Skip — print existing body and exit 0      |
 
 Use `--force` to bypass the human-written check.
-

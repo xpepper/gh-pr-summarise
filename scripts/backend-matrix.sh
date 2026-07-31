@@ -22,7 +22,7 @@ set -euo pipefail
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/gh-pr-summarise"
 TEST_PR="https://github.com/xpepper/gh-pr-summarise/pull/1"
 MAX_DIFF_CHARS="28000"
-BACKENDS="claude copilot openrouter openai pi codex omp agy opencode llm apfel"
+BACKENDS="claude copilot openrouter openai pi omp agy opencode llm apfel"
 
 # ── Argument parsing ───────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do

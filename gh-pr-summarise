@@ -20,7 +20,7 @@ MODEL="${PR_SUMMARISE_MODEL:-}"
 MAX_DIFF_CHARS="${PR_SUMMARISE_MAX_DIFF_CHARS:-28000}"
 
 # Every backend this script knows how to drive.
-KNOWN_BACKENDS="claude copilot openrouter openai pi codex omp agy opencode llm apfel"
+KNOWN_BACKENDS="claude copilot openrouter openai pi omp agy opencode llm apfel"
 
 # Backend pinned explicitly by the user (--backend / PR_SUMMARISE_BACKEND).
 BACKEND="${PR_SUMMARISE_BACKEND:-}"
@@ -334,8 +334,8 @@ backend_openai_generate() {
 #
 # Two rules every CLI backend follows:
 #
-#   </dev/null  - the y/N confirmation prompt reads stdin, and CLIs like
-#                 `codex exec` will happily swallow the answer otherwise.
+#   </dev/null  - the y/N confirmation prompt reads stdin, and agent CLIs can
+#                 swallow the answer otherwise.
 #   AGENT_CWD   - agent CLIs auto-load AGENTS.md / CLAUDE.md from the working
 #                 directory. Run from the repo root they follow *this* project's
 #                 instructions rather than the summarisation prompt, so they run
@@ -385,21 +385,6 @@ backend_omp_generate() {
   model="$(resolve_model omp)"
   [[ -n "$model" ]] && args+=(--model "$model")
   (cd "$AGENT_CWD" && omp "${args[@]}" "$2") 2>/dev/null </dev/null
-}
-
-backend_codex_available() { command -v codex >/dev/null 2>&1; }
-backend_codex_model()     { echo ""; }
-backend_codex_budget()    { echo 28000; }
-backend_codex_generate() {
-  # --skip-git-repo-check: the PR diff is self-contained, so codex does not
-  # need to be in a trusted repo to summarise it.
-  local args=(exec --skip-git-repo-check)
-  local model
-  model="$(resolve_model codex)"
-  [[ -n "$model" ]] && args+=(-c "model=\"$model\"")
-  (cd "$AGENT_CWD" && codex "${args[@]}" "$1
-
-$2") 2>/dev/null </dev/null
 }
 
 backend_agy_available() { command -v agy >/dev/null 2>&1; }

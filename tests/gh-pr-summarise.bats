@@ -84,6 +84,20 @@ teardown() {
   [[ "$output" == *"--help"* ]]
 }
 
+@test "codex is rejected because it cannot be run without tools" {
+  setup_mock_gh ""
+
+  cat > "$_MOCK_DIR/codex" <<'MOCK'
+#!/usr/bin/env bash
+echo "unsafe codex summary"
+MOCK
+  chmod +x "$_MOCK_DIR/codex"
+
+  run bash -c "PR_SUMMARISE_BACKEND=codex bash '$SCRIPT' 123"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"unknown backend: codex"* ]]
+}
+
 @test "--max-diff-chars with a non-integer exits 1" {
   run "$SCRIPT" --max-diff-chars abc
   [ "$status" -eq 1 ]
@@ -698,7 +712,7 @@ MOCK
 
   cat > "$_MOCK_DIR/claude" <<'MOCK'
 #!/usr/bin/env bash
-cat > /dev/null   # a backend that drains stdin, like `codex exec` does
+cat > /dev/null   # simulate a backend that drains stdin
 echo "summary from claude"
 MOCK
   chmod +x "$_MOCK_DIR/claude"
@@ -710,8 +724,7 @@ MOCK
 }
 
 # Agent CLIs auto-load AGENTS.md / CLAUDE.md from their working directory. Run
-# from the repo root they obey this project's instructions instead of ours —
-# the live codex run came back prefixed with the repo's context-marker emoji.
+# from the repo root they obey this project's instructions instead of ours.
 @test "agent CLI backends run outside the repo so project instructions cannot leak" {
   setup_mock_gh ""
 
