@@ -188,6 +188,7 @@ error.
 | `copilot` | `copilot` CLI | Copilot AI credits | Roughly 8–9 credits per call: its own system prompt dominates the request. |
 | `openrouter` | `OPENROUTER_API_KEY` | free tier available | 50 requests/day (1 000/day after $10 in credits), 20 req/min. Defaults to `openai/gpt-oss-20b:free`. |
 | `openai` | `PR_SUMMARISE_ENDPOINT` | depends | Any OpenAI-compatible endpoint: Microsoft Foundry, OpenRouter, Ollama, llama.cpp, `apfel --serve`. |
+| `zai` | `ZAI_API_KEY` | [GLM Coding Plan](https://z.ai/subscribe) | Defaults to `glm-5.2`; `--model glm-5-turbo` is faster. Sends `thinking: disabled` — see below. |
 | `pi` / `omp` | that CLI | provider API key | |
 | `llm` | [`llm`](https://llm.datasette.io) | provider API key | The broadest escape hatch: hundreds of models via plugins, including local ones via `llm-ollama`. |
 | `apfel` | [`apfel`](https://apfel.franzai.com/) | **free, offline** | Apple's on-device model. macOS 26+ on Apple Silicon. See the caveat below. |
@@ -200,6 +201,7 @@ error.
 | `copilot` | Install the [Copilot CLI](https://github.com/github/copilot-cli) and sign in. Needs a Copilot subscription. |
 | `openrouter` | Create a key at [openrouter.ai/keys](https://openrouter.ai/keys) and `export OPENROUTER_API_KEY=...`. |
 | `openai` | `export PR_SUMMARISE_ENDPOINT=...` and, if the endpoint needs one, `PR_SUMMARISE_API_KEY`. |
+| `zai` | Subscribe to a [GLM Coding Plan](https://z.ai/subscribe), then `export ZAI_API_KEY=...`. |
 | `llm` | `uv tool install llm` (or `pipx install llm`), then `llm keys set openai` — or `llm install llm-ollama` for local models. |
 | `apfel` | `brew install apfel`. macOS 26+ on Apple Silicon, with Apple Intelligence enabled. |
 | `pi` / `omp` | Install the CLI and authenticate it however that tool expects. |
@@ -209,6 +211,27 @@ To see which are actually working on your machine:
 ```bash
 bash scripts/backend-matrix.sh
 ```
+
+### Using a z.ai GLM Coding Plan
+
+```bash
+export ZAI_API_KEY="..."
+gh pr-summarise --backend zai                        # glm-5.2
+gh pr-summarise --backend zai --model glm-5-turbo    # faster
+```
+
+The backend targets the coding plan's endpoint, `https://api.z.ai/api/coding/paas/v4`.
+**That is not the same as the general Open Platform endpoint** `https://api.z.ai/api/paas/v4`,
+and the two are not interchangeable — a coding-plan key is rejected by the general one. If
+you would rather configure it by hand through the generic `openai` backend, point
+`PR_SUMMARISE_ENDPOINT` at the `/coding/` URL.
+
+GLM models think by default, and hidden reasoning is charged against the same output budget
+as the answer: `glm-5.2` spends roughly 600 tokens before its first visible character. Since
+this tool treats a truncated response as a failure, the backend sends
+`thinking: {type: disabled}` on every request. That removes the risk and is noticeably
+faster. Reaching z.ai through the generic `openai` backend instead does *not* disable
+thinking, so it is likelier to fail on a large diff.
 
 ### Using OpenRouter's free tier
 
@@ -295,6 +318,9 @@ export OPENROUTER_API_KEY="sk-or-v1-..."
 # Ollama, llama.cpp and `apfel --serve` all speak this protocol.
 export PR_SUMMARISE_ENDPOINT="http://localhost:11434/v1/chat/completions"
 export PR_SUMMARISE_API_KEY="..."
+
+# Required by the zai backend (z.ai GLM Coding Plan)
+export ZAI_API_KEY="..."
 
 # Model to use (equivalent to --model). Meaning depends on the active backend.
 export PR_SUMMARISE_MODEL="openai/gpt-oss-20b:free"

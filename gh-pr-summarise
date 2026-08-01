@@ -97,6 +97,11 @@ Environment variables:
                                 Works with Microsoft Foundry, OpenRouter, Ollama,
                                 llama.cpp, 'apfel --serve', etc.
   PR_SUMMARISE_API_KEY          Bearer token for the 'openai' backend.
+  ZAI_API_KEY                   Required by the 'zai' backend (z.ai GLM Coding
+                                Plan). Uses the coding endpoint
+                                api.z.ai/api/coding/paas/v4 — note that the
+                                general api.z.ai/api/paas/v4 is a different
+                                endpoint and rejects coding-plan keys.
   PR_SUMMARISE_PROMPT_FILE      Path to a file containing a custom prompt.
                                 Overridden by --prompt-file.
   PR_SUMMARISE_TITLE            Set to any non-empty value to generate a title by

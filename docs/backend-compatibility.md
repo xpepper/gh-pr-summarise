@@ -19,6 +19,7 @@ on identical input.
 | `copilot` | ✅ | 9s | Fastest of the subscription backends, and the most accurate in spot checks. Bills ~8–9 AI credits per call. |
 | `openrouter` | ✅ | 24s | Free tier. Defaults to `openai/gpt-oss-20b:free`. |
 | `openai` | ✅ | — | Generic OpenAI-compatible backend. Verified separately by pointing `PR_SUMMARISE_ENDPOINT` at OpenRouter; unavailable in the matrix run because no endpoint was configured. |
+| `zai` | ✅ | 6s | z.ai GLM Coding Plan. Defaults to `glm-5.2`. Measured 2026-08-01, separately from the run above. |
 | `pi` | ✅ | 7s | |
 | `omp` | ✅ | 10s | Rejects `--no-context-files` despite being pi-family. |
 | `llm` | ✅ | 6s | Uses whatever default model `llm` is configured with. |
@@ -32,6 +33,10 @@ backends differ in how much they actually report:
 
 - `copilot`, `claude`, `pi`, `omp`, `llm` and `openrouter` all named both
   changes.
+- `zai` named both changes on `glm-5.2` and on `glm-5-turbo`, and was among the fastest
+  backends measured. Note it sends `thinking: {type: disabled}`: left on, GLM's hidden
+  reasoning eats the same output budget as the answer (~600 tokens on `glm-5.2` before the
+  first visible character), and truncation is a hard failure here.
 - `apfel` named only the README change and missed the easter egg entirely, and it tends to
   skip the requested summary paragraph. It is a reasonable fast local draft, not a
   replacement for the cloud backends.
