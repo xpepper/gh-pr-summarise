@@ -385,10 +385,16 @@ $2") 2>/dev/null </dev/null
 backend_copilot_available() { command -v copilot >/dev/null 2>&1; }
 backend_copilot_model()     { echo ""; }
 backend_copilot_budget()    { echo 28000; }
+# --silent is what keeps copilot's own chatter out of the PR body: without it
+# copilot writes its skill-invocation trace ("● skill(foo)") to *stdout*, and
+# that line lands in the generated description. There is no way to stop the
+# skills loading — they come from ~/.copilot/skills and installed plugins, so
+# AGENT_CWD only defeats project-level ones — but with --available-tools= they
+# cannot act, so the visible trace was the whole problem.
 backend_copilot_generate() {
   local args=(-p "$1
 
-$2" --no-color --log-level none --available-tools= --disable-builtin-mcps
+$2" --no-color --log-level none --silent --available-tools= --disable-builtin-mcps
     --no-custom-instructions --no-remote --no-remote-export)
   local model
   model="$(resolve_model copilot)"
