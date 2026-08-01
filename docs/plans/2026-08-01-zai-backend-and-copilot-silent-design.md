@@ -89,10 +89,17 @@ HTTP_EXTRA_BODY='{}'
 ```
 
 Every HTTP backend resets `HTTP_EXTRA_BODY` to `'{}'` at the top of its `_generate`, exactly
-as they already reset `HTTP_EXTRA_HEADERS`. **This reset is load-bearing, not tidiness:**
-these are globals and the fallback chain runs several backends inside one process, so an
-unreset `thinking` field would follow `zai` onto the next provider and break a request that
-would otherwise have succeeded.
+as they already reset `HTTP_EXTRA_HEADERS`.
+
+**Correction, established during implementation by mutation-testing the guard:** the first
+draft of this design claimed the reset mattered because "the fallback chain runs several
+backends inside one process". That is only half true, and the half that matters is
+narrower. On the normal path `run_with_deadline` runs the backend as a background job
+(`"$@" > "$out" &`) — a subshell, so any global it assigns dies with it and no leak is
+possible. The leak is only reachable when `PR_SUMMARISE_TIMEOUT=0`, where
+`run_with_deadline` calls the backend in the current shell instead. The regression test
+therefore has to pin `PR_SUMMARISE_TIMEOUT=0`; without it the test passes whether or not the
+reset exists, which is exactly what the first version of it did.
 
 ### 2. The `zai` backend
 
@@ -185,3 +192,27 @@ recorded above and by `make integration-test`.
 2. `make integration-test` passes.
 3. One manual `--backend zai` run against the test PR succeeds, and one `--backend copilot`
    run produces a description with no leading `●` line.
+
+---
+
+## Implementation outcome — 2026-08-01
+
+**Commits:** `02d2db5` (zai backend), `d34b4db` (copilot `--silent`), `0280995` (docs).
+
+All four done-criteria met: `make test` 70/70 with shellcheck clean, `make integration-test`
+6/6 against the live test PR, `--backend zai` verified on both `glm-5.2` and `glm-5-turbo`
+(each named both changes in the test PR; 6s via the matrix script), and a live
+`--backend copilot` run containing zero U+25CF characters.
+
+**Deviations from this design:**
+
+- The `HTTP_EXTRA_BODY` rationale was corrected — see the inline correction above. The
+  regression test now pins `PR_SUMMARISE_TIMEOUT=0`.
+- A second defect in that same test was found the same way: `setup_mock_gh` calls
+  `pin_http_backend`, which exports `PR_SUMMARISE_BACKEND`, and a pinned backend overrides
+  `PR_SUMMARISE_BACKENDS` entirely. The test ran `openrouter` alone and never exercised the
+  chain. It now unsets `PR_SUMMARISE_BACKEND` explicitly. **Any future test that exercises
+  the fallback chain has to do the same.**
+- `CLAUDE.md` gained two Key Design Decisions entries (the `HTTP_EXTRA_BODY` reset and the
+  agent-CLI stdout rule) — not planned here, but both are load-bearing details a future
+  reader would otherwise "simplify" away.
