@@ -25,7 +25,7 @@ MAX_DIFF_CHARS="${PR_SUMMARISE_MAX_DIFF_CHARS:-28000}"
 BACKEND_TIMEOUT="${PR_SUMMARISE_TIMEOUT:-300}"
 
 # Every backend this script knows how to drive.
-KNOWN_BACKENDS="claude copilot openrouter openai pi omp llm apfel"
+KNOWN_BACKENDS="claude copilot openrouter openai zai pi omp llm apfel"
 
 # Backends whose CLI exposes no model selection at all, so --model cannot be
 # forwarded. They must never be *labelled* with a requested model either: the
@@ -252,6 +252,7 @@ http_call() {
     --arg tparam "$tokens_param" \
     --argjson maxtok "$max_tokens" \
     --argjson include_temp "$include_temperature" \
+    --argjson extra "${HTTP_EXTRA_BODY:-\{\}}" \
     '{
       model: $model,
       ($tparam): $maxtok,
@@ -259,7 +260,7 @@ http_call() {
         role: "user",
         content: "\($prompt)\n\n\($diff)"
       }]
-    } + (if $include_temp then {temperature: 0.2} else {} end)')
+    } + (if $include_temp then {temperature: 0.2} else {} end) + $extra')
   curl -sS -L "$endpoint" \
     -H "Authorization: Bearer $key" \
     -H "Content-Type: application/json" \
@@ -321,6 +322,7 @@ backend_openrouter_budget()    { echo 28000; }
 backend_openrouter_generate() {
   # 1200 rather than 500: gpt-oss-20b:free spends ~200-300 tokens on hidden
   # reasoning before emitting a single visible character.
+  HTTP_EXTRA_BODY='{}'
   HTTP_EXTRA_HEADERS=(
     -H "HTTP-Referer: https://github.com/xpepper/gh-pr-summarise"
     -H "X-Title: gh-pr-summarise"
@@ -334,8 +336,25 @@ backend_openai_model()     { echo "gpt-4.1-mini"; }
 backend_openai_budget()    { echo 28000; }
 backend_openai_generate() {
   HTTP_EXTRA_HEADERS=()
+  HTTP_EXTRA_BODY='{}'
   http_generate "${PR_SUMMARISE_ENDPOINT:-}" "${PR_SUMMARISE_API_KEY:-}" \
     "$(resolve_model openai)" "$1" "$2" 1200
+}
+
+# z.ai GLM Coding Plan. Note the endpoint: the coding plan lives under
+# /api/coding/paas/v4 and a coding-plan key is rejected by the general
+# /api/paas/v4 Open Platform endpoint. They are not interchangeable.
+backend_zai_available() { [[ -n "${ZAI_API_KEY:-}" ]]; }
+backend_zai_model()     { echo "glm-5.2"; }
+backend_zai_budget()    { echo 28000; }
+backend_zai_generate() {
+  HTTP_EXTRA_HEADERS=()
+  # Thinking off is load-bearing, not a preference. Measured on glm-5.2: ~600
+  # reasoning tokens before the first visible character, against a 1200-token
+  # budget that truncation turns into a hard failure. It is also faster.
+  HTTP_EXTRA_BODY='{"thinking":{"type":"disabled"}}'
+  http_generate "https://api.z.ai/api/coding/paas/v4/chat/completions" \
+    "${ZAI_API_KEY:-}" "$(resolve_model zai)" "$1" "$2" 1200
 }
 
 # ── CLI backends ──────────────────────────────────────────────────────────────
@@ -430,6 +449,12 @@ backend_apfel_generate() {
 
 # ── Backend selection and dispatch ────────────────────────────────────────────
 HTTP_EXTRA_HEADERS=()
+# Extra top-level fields merged into the request body. Every HTTP backend resets
+# it, and that reset is load-bearing on one path: with PR_SUMMARISE_TIMEOUT=0
+# run_with_deadline calls the backend in the current shell rather than as a
+# background job, so a provider-specific field set here survives into the next
+# backend in the fallback chain — which rejects it.
+HTTP_EXTRA_BODY='{}'
 
 backend_is_model_less() { [[ " $MODEL_LESS_BACKENDS " == *" $1 "* ]]; }
 
