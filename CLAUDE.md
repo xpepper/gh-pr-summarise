@@ -90,6 +90,16 @@ machine, so the suite would make live API calls and behave differently in CI.
   track of which backend actually answered, so the banner could name the wrong one.
 - **Transparent model-compat retries** — the HTTP backends retry when a model rejects
   `max_tokens` (retrying with `max_completion_tokens`) or an explicit `temperature`.
+- **`HTTP_EXTRA_BODY` for provider-specific fields** — merged into the request body the way
+  `HTTP_EXTRA_HEADERS` is merged into the headers. Every HTTP backend resets it. That reset
+  is load-bearing on one path: with `PR_SUMMARISE_TIMEOUT=0`, `run_with_deadline` calls the
+  backend in the current shell rather than as a background job, so the assignment survives
+  into the next backend in the chain. `zai` uses it to send `thinking: {type: disabled}` —
+  GLM's hidden reasoning is charged against the same output budget as the answer (~600
+  tokens on `glm-5.2` before the first visible character), and truncation is a hard failure.
+- **Agent CLIs must not narrate onto stdout** — `copilot` needs `--silent` or it writes its
+  skill-invocation trace (`● skill(foo)`) to stdout and that line lands in the PR body. The
+  skills still load; `--available-tools=` is what stops them acting.
 - **Optional PR title** — `--title` (`-t`, env `PR_SUMMARISE_TITLE`) makes a second model
   call to generate a one-line title from the diff. A `[CARD-ID]` prefix is derived
   deterministically from the head branch (first `key-number` token, uppercased; e.g.

@@ -47,7 +47,7 @@ pin_http_backend() {
 }
 
 teardown() {
-  unset PR_SUMMARISE_BACKEND OPENROUTER_API_KEY PR_SUMMARISE_BACKENDS
+  unset PR_SUMMARISE_BACKEND OPENROUTER_API_KEY PR_SUMMARISE_BACKENDS ZAI_API_KEY
   if [[ -n "${_MOCK_DIR:-}" ]]; then
     rm -rf "$_MOCK_DIR"
     unset _MOCK_DIR
@@ -898,4 +898,105 @@ MOCK
   [ "$status" -eq 0 ]
   [[ "$output" == *"clean summary"* ]]
   [[ "$output" != *"LEAKED_REPO_CONTEXT"* ]]
+}
+
+# ── zai backend ───────────────────────────────────────────────────────────────
+
+# Replaces the curl mock with one that reports what it was actually asked to
+# send. Checking only the output banner would pass even with a broken request.
+mock_curl_echoes_request() {
+  cat > "$_MOCK_DIR/curl" <<'MOCK'
+#!/usr/bin/env bash
+url=""; body=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -d) body="$2"; shift 2 ;;
+    http*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+summary="URL=$url MODEL=$(jq -r '.model // "-"' <<< "$body") THINKING=$(jq -r '.thinking.type // "-"' <<< "$body")"
+jq -n --arg s "$summary" '{choices:[{message:{content:$s}}]}'
+MOCK
+  chmod +x "$_MOCK_DIR/curl"
+}
+
+@test "zai posts to the coding-plan endpoint" {
+  setup_mock_gh ""
+  mock_curl_echoes_request
+
+  run bash -c "echo n | PR_SUMMARISE_BACKEND=zai ZAI_API_KEY=fake-key bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"URL=https://api.z.ai/api/coding/paas/v4/chat/completions"* ]]
+}
+
+# GLM models spend ~600 reasoning tokens before their first visible character,
+# which puts the 1200-token budget within reach of finish_reason=length — and
+# truncation is a hard failure here.
+@test "zai disables thinking so the token budget is not spent on reasoning" {
+  setup_mock_gh ""
+  mock_curl_echoes_request
+
+  run bash -c "echo n | PR_SUMMARISE_BACKEND=zai ZAI_API_KEY=fake-key bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"THINKING=disabled"* ]]
+}
+
+@test "zai defaults to glm-5.2 and honours --model" {
+  setup_mock_gh ""
+  mock_curl_echoes_request
+
+  run bash -c "echo n | PR_SUMMARISE_BACKEND=zai ZAI_API_KEY=fake-key bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"MODEL=glm-5.2"* ]]
+
+  run bash -c "echo n | PR_SUMMARISE_BACKEND=zai ZAI_API_KEY=fake-key bash '$SCRIPT' 123 --model glm-5-turbo"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"MODEL=glm-5-turbo"* ]]
+}
+
+@test "zai without ZAI_API_KEY is unavailable rather than falling through" {
+  setup_mock_gh ""
+
+  run bash -c "unset ZAI_API_KEY; PR_SUMMARISE_BACKEND=zai bash '$SCRIPT' 123"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no usable backend"* ]]
+  [[ "$output" == *"'zai' is not available"* ]]
+}
+
+# HTTP_EXTRA_BODY is a global, so zai's thinking field must not follow the
+# fallback chain onto the next provider, which would reject it.
+#
+# PR_SUMMARISE_TIMEOUT=0 is what makes this test bite. On the normal path
+# run_with_deadline runs each backend as a background job — a subshell, so its
+# globals die with it. With the deadline disabled the backend runs in the
+# current shell instead, and the assignment really does persist.
+@test "zai's extra body fields do not leak onto the next backend in the chain" {
+  setup_mock_gh ""
+
+  cat > "$_MOCK_DIR/curl" <<'MOCK'
+#!/usr/bin/env bash
+url=""; body=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -d) body="$2"; shift 2 ;;
+    http*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+if [[ "$url" == *"z.ai"* ]]; then
+  echo '{"choices":[{"message":{"content":""}}]}'   # force a fall through
+else
+  jq -n --arg t "$(jq -r '.thinking.type // "absent"' <<< "$body")" \
+    '{choices:[{message:{content:("openrouter saw thinking=" + $t)}}]}'
+fi
+MOCK
+  chmod +x "$_MOCK_DIR/curl"
+
+  # setup_mock_gh pins PR_SUMMARISE_BACKEND, and a pinned backend overrides the
+  # chain entirely — leaving it set would run openrouter alone and never
+  # exercise the fallback this test is about.
+  run bash -c "unset PR_SUMMARISE_BACKEND; echo n | PR_SUMMARISE_TIMEOUT=0 PR_SUMMARISE_BACKENDS=zai,openrouter ZAI_API_KEY=fake-key OPENROUTER_API_KEY=fake-key bash '$SCRIPT' 123"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"openrouter saw thinking=absent"* ]]
 }
