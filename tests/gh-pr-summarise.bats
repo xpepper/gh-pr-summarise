@@ -26,7 +26,7 @@ EOF
 
   cat > "$mock_dir/curl" <<'EOF'
 #!/usr/bin/env bash
-# Return a minimal valid GitHub Models response
+# Return a minimal valid OpenAI-compatible response
 cat <<'JSON'
 {"choices":[{"message":{"content":"Generated summary."}}]}
 JSON
