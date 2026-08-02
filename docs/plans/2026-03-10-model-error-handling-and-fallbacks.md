@@ -1,3 +1,16 @@
+# ⚠️ [DEPRECATED / HISTORICAL] Model Error Handling & Fallbacks Implementation Plan
+
+> ### **Status: Obsolete / Succeeded by v0.2 Provider Backends**
+> This design document describes the implementation of v0.1 model error handling and fallback chains built specifically around **GitHub Models (`gh models`)**.
+> Since GitHub Models was retired on 2026-07-30 and its inference API now returns HTTP 410, this design plan is entirely obsolete and the codebase was rewritten in v0.2 to support pluggable provider backends.
+>
+> For the current post-rewrite architecture and backend support, see:
+> - **Current documentation:** [README.md](../../README.md)
+> - **Pluggable backend design:** [docs/plans/2026-08-01-zai-backend-and-copilot-silent-design.md](2026-08-01-zai-backend-and-copilot-silent-design.md)
+> - **Backend compatibility matrix:** [docs/backend-compatibility.md](../backend-compatibility.md)
+
+---
+
 # Model Error Handling & Fallbacks Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
