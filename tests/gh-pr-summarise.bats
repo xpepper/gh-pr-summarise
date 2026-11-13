@@ -628,18 +628,23 @@ MOCK
   [[ "$output" == *"safe claude summary"* ]]
 }
 
-@test "Copilot runs with an empty tool allowlist and no built-in MCP servers" {
+@test "Copilot runs with an empty tool allowlist, no built-in MCPs, and session sync off" {
   setup_mock_gh ""
 
   cat > "$_MOCK_DIR/copilot" <<'MOCK'
 #!/usr/bin/env bash
 has_empty_allowlist=false
 has_no_mcp=false
+has_sync_off=false
 for arg in "$@"; do
-  [[ "$arg" == "--available-tools=" ]] && has_empty_allowlist=true
-  [[ "$arg" == "--disable-builtin-mcps" ]] && has_no_mcp=true
+  case "$arg" in
+    --no-remote|--no-remote-export) exit 1 ;;
+    --available-tools=) has_empty_allowlist=true ;;
+    --disable-builtin-mcps) has_no_mcp=true ;;
+    --sync-session=off) has_sync_off=true ;;
+  esac
 done
-if [[ "$has_empty_allowlist" == true && "$has_no_mcp" == true ]]; then
+if [[ "$has_empty_allowlist" == true && "$has_no_mcp" == true && "$has_sync_off" == true ]]; then
   echo "safe copilot summary"
   exit 0
 fi

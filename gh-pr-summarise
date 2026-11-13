@@ -400,7 +400,7 @@ backend_copilot_generate() {
   local args=(-p "$1
 
 $2" --no-color --log-level none --silent --available-tools= --disable-builtin-mcps
-    --no-custom-instructions --no-remote --no-remote-export)
+    --no-custom-instructions --sync-session=off)
   local model
   model="$(resolve_model copilot)"
   [[ -n "$model" ]] && args+=(--model "$model")
